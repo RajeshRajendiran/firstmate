@@ -716,6 +716,34 @@ EOF
   pass "cross-branch run is attributed via the real runs list"
 }
 
+# A run is live from creation: the CLI's own active-run predicate is
+# `status IN ('pending', 'running')`, so a branch whose only runs-list row is
+# still `pending` has a live validation, not an unrecognized status. Reporting
+# unknown here surfaces a healthy crew to the captain as a wake and renders it
+# unknown in the fleet snapshot.
+test_cross_branch_attribution_pending_row_is_working() {
+  reset_fakes
+  local d short; d=$(new_case crossbranch-pending)
+  make_repo_on_branch "$d/wt" fm/feat-pendingcoarse
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pendingcoarse.meta" "window=fm:fm-feat-pendingcoarse" \
+    "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  # This crew's run was just created and has not started its first step.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-01 10:00
+  pending    fm/feat-pendingcoarse ${short}  2026-08-01 09:59
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-pendingcoarse)
+  assert_contains "$out" "state: working" "a pending coarse row is a live run"
+  assert_contains "$out" "source: run-step" "pending coarse row -> run-step source"
+  assert_contains "$out" "validating (pending)" "pending coarse row names its own detail"
+  assert_not_contains "$out" "state: unknown" "pending must not read as an unknown status"
+  pass "a pending coarse runs-list row reads working"
+}
+
 # The runs list is newest-first; a branch with an OLDER completed run must not
 # shadow its own newer active one - the first (topmost) matching row wins.
 test_cross_branch_attribution_picks_most_recent_row() {
@@ -1560,6 +1588,7 @@ test_top_level_fixing_done_log_stays_working
 test_terminal_passed
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list
+test_cross_branch_attribution_pending_row_is_working
 test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_axi_status_terminal_overridden_by_runs_active
