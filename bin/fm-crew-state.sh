@@ -380,11 +380,17 @@ nm_ci_checks_state() {
 # "<status> <branch> <short-sha> <date> [<pr-url>]" separated by runs of
 # spaces (verified: no quoting, so splitting on the first two whitespace runs
 # is exact) - but branch + coarse status is exactly what this predicate needs:
-# is a run for THIS branch active right now. Echoes the first (most recent)
-# matching row's status word (running/completed/cancelled/failed), or empty
-# when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
+# is a run for THIS branch active right now.
+#
+# A branch can accumulate multiple historical runs (rewrites, restarts, or the
+# tool's own ordering quirks), and the newest-first list is not guaranteed to
+# place the current active run before a stale terminal row for the same
+# branch+head. Blindly returning the first matching row therefore risks a
+# false failed/completed verdict for a crew that is still validating. Scan all
+# matching rows and prefer an active (`running`) status; only return a terminal
+# coarse status when no active row is present for this branch+head identity.
 nm_runs_status_for_branch() {  # <branch>
-  local branch=$1 out row st rest br sha
+  local branch=$1 out row st rest br sha first_terminal=''
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
@@ -403,11 +409,15 @@ nm_runs_status_for_branch() {  # <branch>
       if ! nm_coarse_head_matches_worktree "$sha"; then
         continue
       fi
-      printf '%s' "$st"
-      return 0
+      # Active rows outrank terminal rows: a stale failed/completed record for
+      # this branch must not mask a newer run that is still running.
+      case "$st" in
+        running) printf '%s' "$st"; return 0 ;;
+      esac
+      [ -n "$first_terminal" ] || first_terminal=$st
     fi
   done <<< "$out"
-  return 0
+  printf '%s' "$first_terminal"
 }
 
 # CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
@@ -542,6 +552,21 @@ if [ "$HAVE_RUN" = 1 ]; then
             ;;
         esac
       fi
+    fi
+  fi
+
+  # Cross-check for a stale terminal `axi status` record. `no-mistakes axi
+  # status` returns the active-or-most-recent run for the repo, but the same
+  # branch+head can have multiple runs (rewrites, restarts, or the tool's own
+  # ordering/touch semantics). If the run we just read is terminal while the
+  # runs list still shows an active row for this same branch+head, the active
+  # row is the current run and the terminal record is stale. Override to the
+  # coarse working verdict rather than false-failing a healthy validation.
+  if [ "$RUN_SOURCE" = full ] && { [ "$RUN_STATE" = "done" ] || [ "$RUN_STATE" = failed ]; }; then
+    if [ "$(nm_runs_status_for_branch "$CREW_BRANCH")" = running ]; then
+      RUN_STATE=working
+      RUN_DETAIL="validating (background run)"
+      RUN_SOURCE=coarse
     fi
   fi
 
