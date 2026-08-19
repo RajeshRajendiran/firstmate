@@ -380,17 +380,19 @@ nm_ci_checks_state() {
 # "<status> <branch> <short-sha> <date> [<pr-url>]" separated by runs of
 # spaces (verified: no quoting, so splitting on the first two whitespace runs
 # is exact) - but branch + coarse status is exactly what this predicate needs:
-# is a run for THIS branch active right now.
+# is a run for THIS branch active right now. Echoes the first (most recent)
+# matching row's status word (pending/running/completed/cancelled/failed), or
+# empty when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
 #
-# A branch can accumulate multiple historical runs (rewrites, restarts, or the
-# tool's own ordering quirks), and the newest-first list is not guaranteed to
-# place the current active run before a stale terminal row for the same
-# branch+head. Blindly returning the first matching row therefore risks a
-# false failed/completed verdict for a crew that is still validating. Scan all
-# matching rows and prefer an active (`running`) status; only return a terminal
-# coarse status when no active row is present for this branch+head identity.
+# First-matching-row IS newest-matching-row: the listing is ordered strictly
+# `created_at DESC, id DESC` (verified against the installed CLI binary), so a
+# branch that accumulated several runs reports its latest one. Preferring an
+# active row further down the list would invert the bug this predicate exists
+# to avoid - a genuinely failed newest run would be masked forever by an older
+# row that was never terminalized (crashed daemon, superseded record), and a
+# crew whose state never reads failed/done is never reconciled or surfaced.
 nm_runs_status_for_branch() {  # <branch>
-  local branch=$1 out row st rest br sha first_terminal=''
+  local branch=$1 out row st rest br sha
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
   [ -n "$out" ] || return 0
   while IFS= read -r row; do
@@ -409,15 +411,22 @@ nm_runs_status_for_branch() {  # <branch>
       if ! nm_coarse_head_matches_worktree "$sha"; then
         continue
       fi
-      # Active rows outrank terminal rows: a stale failed/completed record for
-      # this branch must not mask a newer run that is still running.
-      case "$st" in
-        running) printf '%s' "$st"; return 0 ;;
-      esac
-      [ -n "$first_terminal" ] || first_terminal=$st
+      printf '%s' "$st"
+      return 0
     fi
   done <<< "$out"
-  printf '%s' "$first_terminal"
+  return 0
+}
+
+# 0 when a coarse runs-list status word means "this run is alive". Mirrors the
+# CLI's own active-run predicate, `status IN ('pending', 'running')` (verified
+# in the installed binary): a freshly created run sits at `pending` until its
+# first step starts, and is just as live as `running`.
+nm_coarse_status_is_active() {  # <status>
+  case "$1" in
+    pending|running) return 0 ;;
+  esac
+  return 1
 }
 
 # CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
@@ -559,9 +568,11 @@ if [ "$HAVE_RUN" = 1 ]; then
   # status` returns the active-or-most-recent run for the repo, but the same
   # branch+head can have multiple runs (rewrites, restarts, or the tool's own
   # ordering/touch semantics). When the record we just read reports a failure
-  # while the runs list still shows an active row for this same branch+head,
-  # the active row is the current run and the failed record is superseded:
-  # report the live validation rather than false-failing a healthy crew.
+  # while the branch's NEWEST runs-list row for this same head is still active,
+  # that newer row is the current run and the failed record is superseded:
+  # report the live validation rather than false-failing a healthy crew. A
+  # newest row that is itself terminal means the failure is genuine and is
+  # reported as such, so a real failure still reaches the captain.
   #
   # Scoped to the failed verdict on purpose. A `done` verdict must never be
   # demoted this way: per the PR #252 analysis above, a run whose checks are
@@ -572,7 +583,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   # keeps the extra `no-mistakes runs` call off the common heartbeat paths.
   STALE_RUN_OVERRIDE=0
   if [ "$RUN_SOURCE" = full ] && [ "$RUN_STATE" = failed ]; then
-    if [ "$(nm_runs_status_for_branch "$CREW_BRANCH")" = running ]; then
+    if nm_coarse_status_is_active "$(nm_runs_status_for_branch "$CREW_BRANCH")"; then
       RUN_STATE=working
       RUN_DETAIL="validating (background run)"
       STALE_RUN_OVERRIDE=1

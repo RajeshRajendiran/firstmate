@@ -760,36 +760,6 @@ EOF
   pass "coarse run does not probe another branch's ci log"
 }
 
-# The cross-branch `no-mistakes runs` fallback used to return the FIRST
-# matching row for this branch. A branch that accumulated several runs
-# therefore reported whatever row happened to come first, so a stale terminal
-# (failed/completed) record could mask a newer run that is still validating.
-# The fallback must scan every matching row and prefer the active one.
-test_runs_fallback_prefers_active_over_terminal() {
-  reset_fakes
-  local d short; d=$(new_case runs-active-over-terminal)
-  make_repo_on_branch "$d/wt" fm/feat-active
-  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
-  make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-active.meta" "window=fm:fm-feat-active" "worktree=$d/wt" "kind=ship"
-  # `axi status` is dominated by another crew's run, so we fall back to the
-  # runs list for this branch.
-  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
-  # Newest-first list carrying both the active run and a superseded failed
-  # record for the same branch+head.
-  FM_FAKE_RUNS_LIST="$(cat <<EOF
-  running    fm/other-crew aaaaaaa  2026-08-01 10:00
-  running    fm/feat-active ${short}  2026-08-01 09:30
-  failed     fm/feat-active ${short}  2026-08-01 09:00
-EOF
-)"
-  local out; out=$(run_crew_state "$d" feat-active)
-  assert_contains "$out" "state: working" "active row in runs list keeps crew working"
-  assert_contains "$out" "source: run-step" "active attribution -> run-step source"
-  assert_not_contains "$out" "state: failed" "stale terminal row must not false-fail a healthy run"
-  pass "runs-list fallback prefers active row over stale terminal row"
-}
-
 # Even when `axi status` itself returns a terminal run for this branch+head,
 # a concurrent active run for the same branch+head visible in the runs list
 # must take precedence. Without this cross-check, a stale or most-recently-
@@ -814,6 +784,58 @@ EOF
   assert_contains "$out" "source: run-step" "active attribution -> run-step source"
   assert_not_contains "$out" "state: failed" "stale terminal axi status must not false-fail a healthy run"
   pass "terminal axi status is overridden by active runs-list row"
+}
+
+# A run is live from the moment it is created: the CLI's own active-run
+# predicate is `status IN ('pending', 'running')`, and a fresh run sits at
+# `pending` until its first step starts. A stale failed `axi status` record
+# must not false-fail the crew during that window either.
+test_axi_status_terminal_overridden_by_runs_pending() {
+  reset_fakes
+  local d short; d=$(new_case axi-terminal-runs-pending)
+  make_repo_on_branch "$d/wt" fm/feat-pending
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pending.meta" "window=fm:fm-feat-pending" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-pending)"
+  # The replacement run exists but has not started its first step yet.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  pending    fm/feat-pending ${short}  2026-08-01 09:30
+  failed     fm/feat-pending ${short}  2026-08-01 09:00
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-pending)
+  assert_contains "$out" "state: working" "a pending replacement run is live"
+  assert_contains "$out" "source: run-step" "pending override keeps the run-step source"
+  assert_not_contains "$out" "state: failed" "stale record must not false-fail a pending run"
+  pass "a pending replacement run also overrides a stale failed record"
+}
+
+# The safety property of the override: it must never mask a genuine failure.
+# `no-mistakes runs` is ordered strictly newest-first, so when the branch's
+# NEWEST row for this head is itself failed, the failure is current - even if
+# an older row for the same branch+head is still recorded as running (a run
+# that was killed before it could be terminalized). Reporting working here
+# would leave the crew permanently un-reconciled and never surfaced.
+test_genuine_failure_not_masked_by_older_running_row() {
+  reset_fakes
+  local d short; d=$(new_case genuine-failure-older-running)
+  make_repo_on_branch "$d/wt" fm/feat-genuinefail
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-genuinefail.meta" "window=fm:fm-feat-genuinefail" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-genuinefail)"
+  # Newest-first: the current run failed; the older row was never terminalized.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  failed     fm/feat-genuinefail ${short}  2026-08-01 09:30
+  running    fm/feat-genuinefail ${short}  2026-08-01 09:00
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-genuinefail)
+  assert_contains "$out" "state: failed" "newest terminal row reports the genuine failure"
+  assert_contains "$out" "source: run-step" "genuine failure stays run-step sourced"
+  assert_not_contains "$out" "state: working" "an older never-terminalized row must not mask a failure"
+  pass "a genuine newest failure is not masked by an older running row"
 }
 
 # The stale-record override must never fire for a green, merge-pending run.
@@ -1540,8 +1562,9 @@ test_terminal_failed
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
-test_runs_fallback_prefers_active_over_terminal
 test_axi_status_terminal_overridden_by_runs_active
+test_axi_status_terminal_overridden_by_runs_pending
+test_genuine_failure_not_masked_by_older_running_row
 test_checks_green_not_demoted_by_own_running_runs_row
 test_stale_terminal_override_ignores_superseded_ci_ready_log
 test_other_branch_run_ignored
