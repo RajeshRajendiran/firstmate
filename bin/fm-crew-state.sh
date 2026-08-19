@@ -555,22 +555,37 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
   fi
 
-  # Cross-check for a stale terminal `axi status` record. `no-mistakes axi
+  # Cross-check for a stale FAILED `axi status` record. `no-mistakes axi
   # status` returns the active-or-most-recent run for the repo, but the same
   # branch+head can have multiple runs (rewrites, restarts, or the tool's own
-  # ordering/touch semantics). If the run we just read is terminal while the
-  # runs list still shows an active row for this same branch+head, the active
-  # row is the current run and the terminal record is stale. Override to the
-  # coarse working verdict rather than false-failing a healthy validation.
-  if [ "$RUN_SOURCE" = full ] && { [ "$RUN_STATE" = "done" ] || [ "$RUN_STATE" = failed ]; }; then
+  # ordering/touch semantics). When the record we just read reports a failure
+  # while the runs list still shows an active row for this same branch+head,
+  # the active row is the current run and the failed record is superseded:
+  # report the live validation rather than false-failing a healthy crew.
+  #
+  # Scoped to the failed verdict on purpose. A `done` verdict must never be
+  # demoted this way: per the PR #252 analysis above, a run whose checks are
+  # green but whose PR is not merged yet stays `running` for its whole
+  # CI-monitor phase, so its own coarse row reads `running` too - overriding
+  # `done` here would report every green, merge-pending PR as still
+  # validating. Keeping the check off the done/completed steady states also
+  # keeps the extra `no-mistakes runs` call off the common heartbeat paths.
+  STALE_RUN_OVERRIDE=0
+  if [ "$RUN_SOURCE" = full ] && [ "$RUN_STATE" = failed ]; then
     if [ "$(nm_runs_status_for_branch "$CREW_BRANCH")" = running ]; then
       RUN_STATE=working
       RUN_DETAIL="validating (background run)"
-      RUN_SOURCE=coarse
+      STALE_RUN_OVERRIDE=1
     fi
   fi
 
-  if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
+  # RUN_SOURCE stays `full` through the override so the ci-ready shortcut below
+  # keeps its CI_LOG_STATE guard. The override itself suppresses that block
+  # outright: a `checks green` status-log line necessarily belongs to the
+  # superseded record (the run that replaced it is validating again), and the
+  # ci-step detail still in RUN_OUT describes that same superseded run, so
+  # neither is evidence that the CURRENT run has reached green.
+  if [ "$STALE_RUN_OVERRIDE" = 0 ] && [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi

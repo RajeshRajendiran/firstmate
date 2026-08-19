@@ -760,12 +760,11 @@ EOF
   pass "coarse run does not probe another branch's ci log"
 }
 
-# Regression for the false-failed healthy run on sasi-telegram-alerts-broken:
-# the cross-branch `no-mistakes runs` fallback used to return the FIRST
-# matching row for this branch. When a stale terminal (failed/completed) row
-# appeared before the active running row for the same branch+head, the crew
-# was reported as failed even though a newer run was still validating.
-# The fallback must scan all matching rows and prefer an active status.
+# The cross-branch `no-mistakes runs` fallback used to return the FIRST
+# matching row for this branch. A branch that accumulated several runs
+# therefore reported whatever row happened to come first, so a stale terminal
+# (failed/completed) record could mask a newer run that is still validating.
+# The fallback must scan every matching row and prefer the active one.
 test_runs_fallback_prefers_active_over_terminal() {
   reset_fakes
   local d short; d=$(new_case runs-active-over-terminal)
@@ -776,16 +775,16 @@ test_runs_fallback_prefers_active_over_terminal() {
   # `axi status` is dominated by another crew's run, so we fall back to the
   # runs list for this branch.
   FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
-  # Newest-first list with a stale failed row for this branch before the
-  # active running row for the same branch+head.
+  # Newest-first list carrying both the active run and a superseded failed
+  # record for the same branch+head.
   FM_FAKE_RUNS_LIST="$(cat <<EOF
   running    fm/other-crew aaaaaaa  2026-08-01 10:00
-  failed     fm/feat-active ${short}  2026-08-01 09:00
   running    fm/feat-active ${short}  2026-08-01 09:30
+  failed     fm/feat-active ${short}  2026-08-01 09:00
 EOF
 )"
   local out; out=$(run_crew_state "$d" feat-active)
-  assert_contains "$out" "state: working" "active row later in runs list keeps crew working"
+  assert_contains "$out" "state: working" "active row in runs list keeps crew working"
   assert_contains "$out" "source: run-step" "active attribution -> run-step source"
   assert_not_contains "$out" "state: failed" "stale terminal row must not false-fail a healthy run"
   pass "runs-list fallback prefers active row over stale terminal row"
@@ -815,6 +814,59 @@ EOF
   assert_contains "$out" "source: run-step" "active attribution -> run-step source"
   assert_not_contains "$out" "state: failed" "stale terminal axi status must not false-fail a healthy run"
   pass "terminal axi status is overridden by active runs-list row"
+}
+
+# The stale-record override must never fire for a green, merge-pending run.
+# A run whose checks are green but whose PR is not merged yet keeps top-level
+# status `running` for its entire CI-monitor phase (the PR #252 invariant), so
+# its OWN row in the runs list reads `running` too. Cross-checking a `done`
+# verdict against that row would demote every green PR back to "validating".
+test_checks_green_not_demoted_by_own_running_runs_row() {
+  reset_fakes
+  local d short; d=$(new_case ci-green-with-runs-row)
+  make_repo_on_branch "$d/wt" fm/feat-greenrow
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-greenrow.meta" "window=fm:fm-feat-greenrow" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-greenrow)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  # Production shape: this crew's own live CI-monitoring run is listed, and its
+  # coarse status is still `running` because the PR is not merged yet.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-greenrow ${short}  2026-08-01 10:00
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-greenrow)
+  assert_contains "$out" "state: done" "green ci-monitor run stays done with its own runs row listed"
+  assert_contains "$out" "checks green" "green ci-monitor detail still mentions checks green"
+  assert_not_contains "$out" "state: working" "own running runs row must not demote a green PR"
+  pass "checks-green verdict survives its own active runs-list row"
+}
+
+# The override switches to a DIFFERENT, still-running run, so a `checks green`
+# status-log line left behind by the superseded record is not evidence about
+# the current run. Reporting done here would tell the captain a crew shipped
+# while its replacement run is actively validating.
+test_stale_terminal_override_ignores_superseded_ci_ready_log() {
+  reset_fakes
+  local d short; d=$(new_case override-stale-ci-ready-log)
+  make_repo_on_branch "$d/wt" fm/feat-supersededlog
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-supersededlog.meta" "window=fm:fm-feat-supersededlog" "worktree=$d/wt" "kind=ship"
+  # Checks-green line appended by the run that has since failed.
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/feat-supersededlog.status"
+  FM_FAKE_AXI_STATUS="$(run_failed fm/feat-supersededlog)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/feat-supersededlog ${short}  2026-08-01 09:30
+  failed     fm/feat-supersededlog ${short}  2026-08-01 09:00
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-supersededlog)
+  assert_contains "$out" "state: working" "superseded record + active run -> still validating"
+  assert_contains "$out" "source: run-step" "override keeps the run-step source"
+  assert_not_contains "$out" "state: done" "a superseded checks-green log must not report done"
+  pass "stale-record override does not inherit the superseded checks-green log"
 }
 
 # A different-branch run with NO matching runs-list row must NOT be
@@ -1490,6 +1542,8 @@ test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_runs_fallback_prefers_active_over_terminal
 test_axi_status_terminal_overridden_by_runs_active
+test_checks_green_not_demoted_by_own_running_runs_row
+test_stale_terminal_override_ignores_superseded_ci_ready_log
 test_other_branch_run_ignored
 test_no_run_busy_pane
 test_no_run_footer_text_alone_is_not_working
