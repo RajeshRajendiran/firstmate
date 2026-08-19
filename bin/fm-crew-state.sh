@@ -509,7 +509,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     # surfaced through signal_reason_is_actionable regardless of this
     # coarse-vs-full distinction, so a real gate is never silently missed.
     case "$COARSE_STATUS" in
-      running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
+      running)   RUN_STATE=working; RUN_DETAIL="validating (stale-record override)" ;;
       pending)   RUN_STATE=working; RUN_DETAIL="validating (pending)" ;;
       completed) RUN_STATE="done";  RUN_DETAIL="run completed" ;;
       failed)    RUN_STATE=failed;  RUN_DETAIL="run failed" ;;
@@ -615,8 +615,15 @@ if [ "$HAVE_RUN" = 1 ]; then
   # report - `pending` means the run has not started its first step, so it
   # cannot be monitoring anything and the green line must come from an earlier
   # run on this branch.
+  #
+  # A coarse `running` row is the same scenario reached via the cross-branch
+  # fallback: `axi status` answered but did not attribute this branch (so the
+  # active-or-most-recent run is NOT this crew's), meaning any `running` row
+  # in the runs list for this branch is stale (an older head that was not
+  # terminalized). It cannot be monitoring the crew's PR and a green line
+  # from the status log must belong to an earlier run.
   CI_READY_LOG_SUPERSEDED=$STALE_RUN_OVERRIDE
-  if [ "$RUN_SOURCE" = coarse ] && [ "$COARSE_STATUS" = pending ]; then
+  if [ "$RUN_SOURCE" = coarse ] && { [ "$COARSE_STATUS" = pending ] || [ "$COARSE_STATUS" = running ]; }; then
     CI_READY_LOG_SUPERSEDED=1
   fi
 

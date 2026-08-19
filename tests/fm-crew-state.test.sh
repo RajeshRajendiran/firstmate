@@ -795,26 +795,25 @@ EOF
   pass "cross-branch attribution picks the branch's most recent row"
 }
 
-test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status() {
+test_coarse_running_run_has_no_ci_log_and_suppresses_ci_ready() {
   reset_fakes
-  local d short; d=$(new_case coarse-ready-other-log)
-  make_repo_on_branch "$d/wt" fm/feat-coarseready
+  local d short; d=$(new_case coarse-running-no-ci)
+  make_repo_on_branch "$d/wt" fm/feat-coarse-running
   short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
   make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-coarseready.meta" "window=fm:fm-feat-coarseready" "worktree=$d/wt" "kind=ship"
-  printf 'done: PR https://github.com/o/r/pull/4 checks green\n' > "$d/state/feat-coarseready.status"
+  fm_write_meta "$d/state/feat-coarse-running.meta" "window=fm:fm-feat-coarse-running" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/4 checks green\n' > "$d/state/feat-coarse-running.status"
   FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/other-crew)"
   FM_FAKE_RUNS_LIST="$(cat <<EOF
   running    fm/other-crew aaaaaaa  2026-07-02 22:10
-  running    fm/feat-coarseready ${short}  2026-07-02 22:05
+  running    fm/feat-coarse-running ${short}  2026-07-02 22:05
 EOF
 )"
-  FM_FAKE_CI_LOGS="CI checks running, waiting for results..."
-  local out; out=$(run_crew_state "$d" feat-coarseready)
-  assert_contains "$out" "state: done" "coarse ready status -> done"
-  assert_contains "$out" "source: status-log" "coarse ready status remains status-log sourced"
-  assert_not_contains "$out" "state: working" "coarse ready status must not be suppressed by another branch log"
-  pass "coarse run does not probe another branch's ci log"
+  local out; out=$(run_crew_state "$d" feat-coarse-running)
+  assert_contains "$out" "state: working" "coarse running without step detail -> working"
+  assert_contains "$out" "source: run-step" "coarse running keeps run-step source"
+  assert_not_contains "$out" "state: done" "coarse running must not inherit a stale ci-ready log"
+  pass "coarse running suppresses ci-ready when no step detail is available"
 }
 
 # Even when `axi status` itself returns a terminal run for this branch+head,
@@ -1620,7 +1619,7 @@ test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_pending_row_is_working
 test_coarse_pending_row_ignores_stale_ci_ready_log
 test_cross_branch_attribution_picks_most_recent_row
-test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
+test_coarse_running_run_has_no_ci_log_and_suppresses_ci_ready
 test_axi_status_terminal_overridden_by_runs_active
 test_axi_status_terminal_overridden_by_runs_pending
 test_genuine_failure_not_masked_by_older_running_row
