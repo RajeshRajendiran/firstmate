@@ -42,6 +42,17 @@
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
 #      green, so a green PR is never silently read as still-validating.
+#      ALSO EXCEPT: a `failed` axi-status record is NOT terminal when the
+#      branch's newest runs-list row for this same head is still active
+#      (pending/running) - that newer row is the current run and the failed
+#      record is superseded, so the verdict is working. A newest row that is
+#      itself terminal keeps reporting the genuine failure.
+#      Both exceptions have a counterpart in step 3: whenever the run being
+#      reported provably cannot be the one that appended a `checks green`
+#      status-log line - the superseded-record override fired, or the only
+#      evidence is a coarse `pending` row, which has not started a step and so
+#      cannot be monitoring a PR - that line's ci-ready shortcut is suppressed,
+#      so a green line left by an earlier run can never report done.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -597,7 +608,19 @@ if [ "$HAVE_RUN" = 1 ]; then
   # superseded record (the run that replaced it is validating again), and the
   # ci-step detail still in RUN_OUT describes that same superseded run, so
   # neither is evidence that the CURRENT run has reached green.
-  if [ "$STALE_RUN_OVERRIDE" = 0 ] && [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
+  #
+  # A coarse `pending` row is the same situation reached another way. Unlike a
+  # coarse `running` row - which CAN be the crew's own run sitting in its
+  # CI-monitor phase, exactly the case the coarse shortcut below exists to
+  # report - `pending` means the run has not started its first step, so it
+  # cannot be monitoring anything and the green line must come from an earlier
+  # run on this branch.
+  CI_READY_LOG_SUPERSEDED=$STALE_RUN_OVERRIDE
+  if [ "$RUN_SOURCE" = coarse ] && [ "$COARSE_STATUS" = pending ]; then
+    CI_READY_LOG_SUPERSEDED=1
+  fi
+
+  if [ "$CI_READY_LOG_SUPERSEDED" = 0 ] && [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi

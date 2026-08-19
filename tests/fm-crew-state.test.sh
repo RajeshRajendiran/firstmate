@@ -744,6 +744,35 @@ EOF
   pass "a pending coarse runs-list row reads working"
 }
 
+# A `pending` run has not started its first step, so it cannot be the run that
+# is monitoring a green PR: a leftover `done: ... checks green` line belongs to
+# an earlier run on this branch. Reporting done here would hand the captain a
+# terminal outcome (fm-inactive-reconcile treats `state: done` as one) while
+# the crew's new validation is still queued.
+test_coarse_pending_row_ignores_stale_ci_ready_log() {
+  reset_fakes
+  local d short; d=$(new_case coarse-pending-stale-ready)
+  make_repo_on_branch "$d/wt" fm/feat-pendingready
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pendingready.meta" "window=fm:fm-feat-pendingready" \
+    "worktree=$d/wt" "kind=ship"
+  # Checks-green line from the crew's previous, already-finished run.
+  printf 'done: PR https://github.com/o/r/pull/5 checks green\n' > "$d/state/feat-pendingready.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/other-crew)"
+  # This crew's replacement run is queued but has not started a step.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-08-01 10:00
+  pending    fm/feat-pendingready ${short}  2026-08-01 09:59
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-pendingready)
+  assert_contains "$out" "state: working" "a queued run is still validating, not done"
+  assert_contains "$out" "source: run-step" "pending coarse row keeps the run-step source"
+  assert_not_contains "$out" "state: done" "a pending run cannot be monitoring a green PR"
+  pass "a pending coarse row does not inherit a stale checks-green log"
+}
+
 # The runs list is newest-first; a branch with an OLDER completed run must not
 # shadow its own newer active one - the first (topmost) matching row wins.
 test_cross_branch_attribution_picks_most_recent_row() {
@@ -1589,6 +1618,7 @@ test_terminal_passed
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_pending_row_is_working
+test_coarse_pending_row_ignores_stale_ci_ready_log
 test_cross_branch_attribution_picks_most_recent_row
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_axi_status_terminal_overridden_by_runs_active
