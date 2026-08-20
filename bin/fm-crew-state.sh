@@ -50,9 +50,11 @@
 #      Both exceptions have a counterpart in step 3: whenever the run being
 #      reported provably cannot be the one that appended a `checks green`
 #      status-log line - the superseded-record override fired, or the only
-#      evidence is a coarse `pending` row, which has not started a step and so
-#      cannot be monitoring a PR - that line's ci-ready shortcut is suppressed,
-#      so a green line left by an earlier run can never report done.
+#      evidence is a coarse `pending` or `running` row, which carries no
+#      step/gate detail and so cannot be verified to be monitoring the PR
+#      that owns that green line - that line's ci-ready shortcut is
+#      suppressed, so a green line left by an earlier run can never report
+#      done.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -509,7 +511,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     # surfaced through signal_reason_is_actionable regardless of this
     # coarse-vs-full distinction, so a real gate is never silently missed.
     case "$COARSE_STATUS" in
-      running)   RUN_STATE=working; RUN_DETAIL="validating (stale-record override)" ;;
+      running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
       pending)   RUN_STATE=working; RUN_DETAIL="validating (pending)" ;;
       completed) RUN_STATE="done";  RUN_DETAIL="run completed" ;;
       failed)    RUN_STATE=failed;  RUN_DETAIL="run failed" ;;
@@ -597,7 +599,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   if [ "$RUN_SOURCE" = full ] && [ "$RUN_STATE" = failed ]; then
     if nm_coarse_status_is_active "$(nm_runs_status_for_branch "$CREW_BRANCH")"; then
       RUN_STATE=working
-      RUN_DETAIL="validating (background run)"
+      RUN_DETAIL="validating (stale-record override)"
       STALE_RUN_OVERRIDE=1
     fi
   fi
@@ -609,19 +611,19 @@ if [ "$HAVE_RUN" = 1 ]; then
   # ci-step detail still in RUN_OUT describes that same superseded run, so
   # neither is evidence that the CURRENT run has reached green.
   #
-  # A coarse `pending` row is the same situation reached another way. Unlike a
-  # coarse `running` row - which CAN be the crew's own run sitting in its
-  # CI-monitor phase, exactly the case the coarse shortcut below exists to
-  # report - `pending` means the run has not started its first step, so it
-  # cannot be monitoring anything and the green line must come from an earlier
-  # run on this branch.
-  #
-  # A coarse `running` row is the same scenario reached via the cross-branch
-  # fallback: `axi status` answered but did not attribute this branch (so the
-  # active-or-most-recent run is NOT this crew's), meaning any `running` row
-  # in the runs list for this branch is stale (an older head that was not
-  # terminalized). It cannot be monitoring the crew's PR and a green line
-  # from the status log must belong to an earlier run.
+  # A coarse `pending` or `running` row is the same situation reached another
+  # way. The cross-branch fallback lands here only when `axi status` answered
+  # but did not attribute this branch, so the run being reported is known only
+  # from the plain runs list - which carries no step/gate detail. The
+  # head-matching guard in nm_runs_status_for_branch ensures the returned row
+  # is for THIS worktree's head, but that is all it establishes: the row may be
+  # the crew's own live CI-monitoring run (a `running` row CAN be exactly
+  # that), or it may be a stale record a crashed or superseded run left
+  # without terminalizing. Without step detail there is no way to verify
+  # that a `checks green` status-log line was appended by THIS run rather
+  # than an earlier one on the branch, so the shortcut is suppressed and the
+  # row reads `working` until `axi status` attributes this branch and
+  # supplies the step detail that confirms green.
   CI_READY_LOG_SUPERSEDED=$STALE_RUN_OVERRIDE
   if [ "$RUN_SOURCE" = coarse ] && { [ "$COARSE_STATUS" = pending ] || [ "$COARSE_STATUS" = running ]; }; then
     CI_READY_LOG_SUPERSEDED=1
