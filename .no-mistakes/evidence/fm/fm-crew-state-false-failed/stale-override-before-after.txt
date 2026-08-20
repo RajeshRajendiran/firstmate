@@ -1,0 +1,6 @@
+===== BEFORE FIX (base commit 87681a4) =====
+state: failed · source: run-step · run failed
+
+===== AFTER FIX (target commit ca42337) =====
+state: working · source: run-step · validating (stale-record override)
+
