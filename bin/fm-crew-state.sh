@@ -34,14 +34,22 @@
 #      A run matches when its head equals the worktree HEAD, or the worktree HEAD
 #      is an ancestor of the run head (pipeline fix commits advanced the run on
 #      the same line of history). Local work that advanced past the run head, or
-#      diverged from it, invalidates attribution.
-#      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
-#      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
-#      the active step is ci, `axi status` alone cannot tell "still waiting on
-#      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
-#      a ci-step log-tail check overrides working -> done once checks read
-#      green, so a green PR is never silently read as still-validating.
+#      diverged from it, invalidates attribution. Only the branch's NEWEST run
+#      is ever a candidate: a newer run supersedes every older one on that
+#      branch, so a head mismatch on the newest run attributes NOTHING rather
+#      than falling back to an older row (see nm_runs_status_for_branch) - with
+#      no attributable run the crew falls through to live pane/log evidence,
+#      which cannot report a superseded failure as current.
+#      The run-step is AUTHORITATIVE: pending/running/fixing -> working,
+#      ci -> working, awaiting_approval/fix_review -> parked (with gate
+#      findings), terminal passed/checks-passed -> done, failed/cancelled ->
+#      failed. EXCEPT: while the active step is ci, `axi status` alone cannot
+#      tell "still waiting on checks" from "checks green, waiting on merge"
+#      (see nm_ci_checks_state) - a ci-step log-tail check overrides
+#      working -> done once checks read green, so a green PR is never silently
+#      read as still-validating. A `checks green` status-log line can do the
+#      same only for a run that has itself reached ci; a younger run that has
+#      not must never inherit an earlier run's green line.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -560,22 +568,25 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
   fi
 
-  # A `pending` run has not started a step, so it cannot be the run that
-  # reached green: a `checks green` status-log line necessarily belongs to an
-  # earlier run on this branch and must not shortcut this one to done. Keyed on
-  # the run's own status, which both lookups fill in, so either can report a
-  # pending run and neither can inherit the earlier run's line.
+  # A `checks green` status-log line is written by the run that was monitoring
+  # the PR, so it is only THIS run's own line when this run has reached its own
+  # ci step. A run that has not (a `pending` run that has not started a step at
+  # all, or a `running` run still at an earlier step after the captain asked for
+  # a change) is necessarily younger than the run that wrote the line, and the
+  # PR it points at is no longer green - so the line must not shortcut it to
+  # done. On the full path that precondition is read off the step table
+  # (an empty effective ci-step status means ci was never reached); the coarse
+  # lookup has no step table, so there the run's own status word is the only
+  # available discriminator.
   if [ "$RUN_STATE" = working ] && [ "$RUN_STATUS" != pending ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
     [ -n "$CI_STEP_STATUS" ] || CI_STEP_STATUS=$(nm_effective_ci_step_status)
-    if [ "$RUN_STATUS" = fixing ]; then
+    if [ "$RUN_STATUS" = fixing ] || [ "$CI_STEP_STATUS" = fixing ] || [ -z "$CI_STEP_STATUS" ]; then
       CI_LOG_STATE=not-ready
     elif [ "$CI_STEP_STATUS" = running ] && [ -z "$CI_LOG_STATE" ]; then
       CI_LOG_STATE=$(nm_ci_checks_state)
-    elif [ "$CI_STEP_STATUS" = fixing ]; then
-      CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"

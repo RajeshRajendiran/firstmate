@@ -1536,6 +1536,26 @@ test_pending_run_does_not_take_ci_ready_log() {
   pass "a full-status pending run does not take an earlier run's ci-ready log line"
 }
 
+# The same rule one step further along: a relaunched run that IS running but has
+# not yet reached its own ci step (the captain asked for a change, the crew
+# pushed fix commits and the new run is back at review) must not inherit the
+# previous run's `checks green` line either - that PR is no longer green.
+test_prereq_step_run_does_not_take_ci_ready_log() {
+  reset_fakes
+  local d out
+  d=$(new_case prereq-step-ready-log)
+  make_repo_on_branch "$d/wt" fm/feat-prereq-ready
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/prereqready.meta" "window=fm:fm-prereqready" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/12 checks green\n' > "$d/state/prereqready.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-prereq-ready)"
+  out=$(run_crew_state "$d" prereqready)
+  assert_contains "$out" "state: working" "a run that has not reached ci is still validating"
+  assert_contains "$out" "source: run-step" "pre-ci run stays run-step sourced"
+  assert_not_contains "$out" "state: done" "an earlier run's green line must not settle a pre-ci run"
+  pass "a run that has not reached ci does not take an earlier run's ci-ready log line"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -1613,5 +1633,6 @@ test_newest_failed_row_still_reports_failed
 test_coarse_pending_row_is_working
 test_coarse_pending_row_does_not_take_ci_ready_log
 test_pending_run_does_not_take_ci_ready_log
+test_prereq_step_run_does_not_take_ci_ready_log
 
 echo "all fm-crew-state tests passed"
