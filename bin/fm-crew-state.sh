@@ -37,9 +37,18 @@
 #      diverged from it, invalidates attribution. Only the branch's NEWEST run
 #      is ever a candidate: a newer run supersedes every older one on that
 #      branch, so a head mismatch on the newest run attributes NOTHING rather
-#      than falling back to an older row (see nm_runs_status_for_branch) - with
-#      no attributable run the crew falls through to live pane/log evidence,
-#      which cannot report a superseded failure as current.
+#      than falling back to an older row (see nm_runs_status_for_branch). The
+#      guarantee that buys is bounded and worth stating exactly: the run-step
+#      path never reports a superseded run's verdict as current. It is NOT a
+#      guarantee that no stale terminal verdict can surface at all. With no
+#      attributable run this drops to step 4, and there an earlier run's
+#      `failed:`/`done:` status-log line still becomes `state: failed|done -
+#      source: status-log` whenever the pane reads idle - which it does while
+#      the pipeline daemon, not the crew, owns the fix round. KNOWN LIMITATION,
+#      deferred: a live (pending/running) newest row is positive proof the crew
+#      is not terminal, so that case could suppress the terminal log fallback
+#      instead; today the lookup reports only "attributable or not" and cannot
+#      tell step 4 the difference.
 #      The run-step is AUTHORITATIVE: pending/running/fixing -> working,
 #      ci -> working, awaiting_approval/fix_review -> parked (with gate
 #      findings), terminal passed/checks-passed -> done, failed/cancelled ->
@@ -47,9 +56,14 @@
 #      tell "still waiting on checks" from "checks green, waiting on merge"
 #      (see nm_ci_checks_state) - a ci-step log-tail check overrides
 #      working -> done once checks read green, so a green PR is never silently
-#      read as still-validating. A `checks green` status-log line can do the
-#      same only for a run that has itself reached ci; a younger run that has
-#      not must never inherit an earlier run's green line.
+#      read as still-validating. A `checks green` status-log line can settle a
+#      working run to done the same way, but that is a FULL-PATH-ONLY
+#      guarantee: on the `axi status` path the run must have reached its own ci
+#      step, so a younger run still short of ci never inherits an earlier run's
+#      green line. The coarse runs-list path has no step table to test that
+#      against and knowingly cannot enforce it - a coarse `running` row IS
+#      reported done off an earlier run's green line; only `pending` is
+#      suppressed there, on the status word alone. KNOWN LIMITATION, deferred.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -401,8 +415,11 @@ nm_ci_checks_state() {
 # in-flight run whose pipeline-rebased head had diverged from the worktree tip,
 # the newest row was skipped for that mismatch, and an older terminal row whose
 # head still equalled the unadvanced worktree tip was reported as the current
-# verdict. With no attributable row the caller falls through to live pane and
-# status-log evidence, which cannot report a superseded failure as current.
+# verdict. What this function guarantees is exactly that no superseded run-step
+# verdict is attributed - not that the caller then reports something fresh. With
+# no attributable row the caller drops to the pane/status-log fallback, and an
+# idle pane plus an earlier run's terminal `failed:`/`done:` line still reports
+# that line as current (source: status-log); see the step-4 note in the header.
 nm_runs_status_for_branch() {  # <branch>
   local branch=$1 out row st rest br sha
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
