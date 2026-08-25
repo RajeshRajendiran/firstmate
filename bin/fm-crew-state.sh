@@ -373,9 +373,21 @@ nm_ci_checks_state() {
 # "<status> <branch> <short-sha> <date> [<pr-url>]" separated by runs of
 # spaces (verified: no quoting, so splitting on the first two whitespace runs
 # is exact) - but branch + coarse status is exactly what this predicate needs:
-# is a run for THIS branch active right now. Echoes the first (most recent)
-# matching row's status word (running/completed/cancelled/failed), or empty
-# when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
+# is a run for THIS branch active right now. Echoes the branch's NEWEST row's
+# status word (pending/running/completed/cancelled/failed), or empty when that
+# row is not bound to this worktree's code, or when the branch has no row
+# within FM_CREW_STATE_RUNS_LIMIT rows.
+#
+# Only the branch's newest row is attributable, and a head mismatch on it ends
+# the scan instead of continuing to older rows. A newer run on a branch
+# supersedes every older run on that branch by definition, so an older row is
+# never the current one - and scanning past the newest row is what made a
+# healthy crew report `failed`: after a relaunch the branch carried an
+# in-flight run whose pipeline-rebased head had diverged from the worktree tip,
+# the newest row was skipped for that mismatch, and an older terminal row whose
+# head still equalled the unadvanced worktree tip was reported as the current
+# verdict. With no attributable row the caller falls through to live pane and
+# status-log evidence, which cannot report a superseded failure as current.
 nm_runs_status_for_branch() {  # <branch>
   local branch=$1 out row st rest br sha
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
@@ -391,15 +403,11 @@ nm_runs_status_for_branch() {  # <branch>
     rest=$(trim "$rest")
     sha=${rest%% *}
     if [ "$br" = "$branch" ]; then
-      # Same code-identity rule as axi status: skip a same-branch row whose
-      # short-sha does not match this worktree (rewritten or advanced tip).
-      if ! nm_coarse_head_matches_worktree "$sha"; then
-        # An UNRESOLVABLE head is unknown attribution, not a proven
-        # mismatch. Stop instead of surfacing an older, superseded row;
-        # the caller's pane/log fallback can answer without misattribution.
-        fm_nm_head_resolvable "$WT" "$sha" || return 0
-        continue
-      fi
+      # Same code-identity rule as axi status: a newest row whose short-sha
+      # does not match this worktree - a proven mismatch (rewritten, rebased,
+      # or advanced tip) or an unresolvable head that is unknown attribution -
+      # attributes nothing, and no older row is consulted in its place.
+      nm_coarse_head_matches_worktree "$sha" || return 0
       printf '%s' "$st"
       return 0
     fi
@@ -480,8 +488,11 @@ if [ "$HAVE_RUN" = 1 ]; then
     # needs-decision/blocked status-log append (a captain-relevant VERB) is
     # surfaced through signal_reason_is_actionable regardless of this
     # coarse-vs-full distinction, so a real gate is never silently missed.
+    # `pending` is a live run that has not started its first step, and is as
+    # much a validation in progress as `running`.
     case "$COARSE_STATUS" in
       running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
+      pending)   RUN_STATE=working; RUN_DETAIL="validating (pending)" ;;
       completed) RUN_STATE="done";  RUN_DETAIL="run completed" ;;
       failed)    RUN_STATE=failed;  RUN_DETAIL="run failed" ;;
       cancelled) RUN_STATE=failed;  RUN_DETAIL="run cancelled" ;;
@@ -547,7 +558,10 @@ if [ "$HAVE_RUN" = 1 ]; then
     fi
   fi
 
-  if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
+  # A `pending` run has not started a step, so it cannot be the run that
+  # reached green: a `checks green` status-log line necessarily belongs to an
+  # earlier run on this branch and must not shortcut this one to done.
+  if [ "$RUN_STATE" = working ] && [ "$COARSE_STATUS" != pending ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
