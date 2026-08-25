@@ -191,6 +191,21 @@ run:
 EOF
 }
 
+run_pending() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: pending
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,pending,0,0
+    review,pending,0,0
+EOF
+}
+
 run_fixing() {  # <branch>
   cat <<EOF
 run:
@@ -1503,6 +1518,24 @@ EOF
   pass "a coarse pending row does not take an earlier run's ci-ready log line"
 }
 
+# The same rule on the full `axi status` path: `axi status` can answer with this
+# branch's own freshly created run before it has started a step, and an earlier
+# run's `checks green` line must not settle that one either.
+test_pending_run_does_not_take_ci_ready_log() {
+  reset_fakes
+  local d out
+  d=$(new_case pending-full-ready-log)
+  make_repo_on_branch "$d/wt" fm/feat-pending-full
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/pendingfull.meta" "window=fm:fm-pendingfull" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/11 checks green\n' > "$d/state/pendingfull.status"
+  FM_FAKE_AXI_STATUS="$(run_pending fm/feat-pending-full)"
+  out=$(run_crew_state "$d" pendingfull)
+  assert_contains "$out" "state: working" "a pending run found via axi status is still validating"
+  assert_not_contains "$out" "state: done" "an earlier run's green line must not settle a pending run"
+  pass "a full-status pending run does not take an earlier run's ci-ready log line"
+}
+
 test_missing_run_head_falls_back_to_current_state() {
   reset_fakes
   local d out
@@ -1579,5 +1612,6 @@ test_superseded_failed_row_is_not_attributed
 test_newest_failed_row_still_reports_failed
 test_coarse_pending_row_is_working
 test_coarse_pending_row_does_not_take_ci_ready_log
+test_pending_run_does_not_take_ci_ready_log
 
 echo "all fm-crew-state tests passed"
