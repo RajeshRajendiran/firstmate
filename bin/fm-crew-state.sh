@@ -490,6 +490,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     # coarse-vs-full distinction, so a real gate is never silently missed.
     # `pending` is a live run that has not started its first step, and is as
     # much a validation in progress as `running`.
+    RUN_STATUS=$COARSE_STATUS
     case "$COARSE_STATUS" in
       running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
       pending)   RUN_STATE=working; RUN_DETAIL="validating (pending)" ;;
@@ -560,8 +561,10 @@ if [ "$HAVE_RUN" = 1 ]; then
 
   # A `pending` run has not started a step, so it cannot be the run that
   # reached green: a `checks green` status-log line necessarily belongs to an
-  # earlier run on this branch and must not shortcut this one to done.
-  if [ "$RUN_STATE" = working ] && [ "$COARSE_STATUS" != pending ] && log_reports_ci_ready; then
+  # earlier run on this branch and must not shortcut this one to done. Keyed on
+  # the run's own status, which both lookups fill in, so either can report a
+  # pending run and neither can inherit the earlier run's line.
+  if [ "$RUN_STATE" = working ] && [ "$RUN_STATUS" != pending ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
