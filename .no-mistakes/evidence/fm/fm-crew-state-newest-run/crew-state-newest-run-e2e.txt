@@ -1,0 +1,164 @@
+===================================================================
+  BEFORE THE FIX  (bin/fm-crew-state.sh @ 6a2cd6c)
+===================================================================
+--- scenario: incident
+    newest run is IN FLIGHT with a pipeline-rebased head; an older FAILED run still matches the worktree tip
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      running    fm/feat-relaunch 33c7bbb  2026-08-25 15:08
+      failed     fm/feat-relaunch b0ac4a5  2026-08-22 16:18
+    (worktree tip = b0ac4a5; rebased in-flight head = 33c7bbb)
+
+$ fm-crew-state.sh relaunch
+    state: failed · source: run-step · run failed
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | failed / run-step | ship | - | tmux | present | - | /tmp/fm-incident.SWRLz7/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> false  (surfaced to the captain as not-working)
+
+===================================================================
+  AFTER THE FIX   (bin/fm-crew-state.sh @ 2fdf6a9)
+===================================================================
+--- scenario: incident
+    newest run is IN FLIGHT with a pipeline-rebased head; an older FAILED run still matches the worktree tip
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      running    fm/feat-relaunch 33c7bbb  2026-08-25 15:08
+      failed     fm/feat-relaunch b0ac4a5  2026-08-22 16:18
+    (worktree tip = b0ac4a5; rebased in-flight head = 33c7bbb)
+
+$ fm-crew-state.sh relaunch
+    state: working · source: pane · harness busy (claude-hook)
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | working / pane | ship | - | tmux | present | - | /tmp/fm-incident.nlJHXV/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> true   (absorbed as working; NO failure escalation to the captain)
+
+===================================================================
+  BEFORE THE FIX  (bin/fm-crew-state.sh @ 6a2cd6c)
+===================================================================
+--- scenario: genuine-failure
+    SAFETY COUNTERPART: the branch's newest run genuinely failed on this exact code
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      failed     fm/feat-relaunch 41adeb6  2026-08-25 21:00
+      completed  fm/feat-relaunch 41adeb6  2026-08-24 09:00
+    (worktree tip = 41adeb6; rebased in-flight head = 24204aa)
+
+$ fm-crew-state.sh relaunch
+    state: failed · source: run-step · run failed
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | failed / run-step | ship | - | tmux | present | - | /tmp/fm-incident.Lmcknl/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> false  (surfaced to the captain as not-working)
+
+===================================================================
+  AFTER THE FIX   (bin/fm-crew-state.sh @ 2fdf6a9)
+===================================================================
+--- scenario: genuine-failure
+    SAFETY COUNTERPART: the branch's newest run genuinely failed on this exact code
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      failed     fm/feat-relaunch 41adeb6  2026-08-25 21:00
+      completed  fm/feat-relaunch 41adeb6  2026-08-24 09:00
+    (worktree tip = 41adeb6; rebased in-flight head = 24204aa)
+
+$ fm-crew-state.sh relaunch
+    state: failed · source: run-step · run failed
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | failed / run-step | ship | - | tmux | present | - | /tmp/fm-incident.M493Rt/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> false  (surfaced to the captain as not-working)
+
+===================================================================
+  BEFORE THE FIX  (bin/fm-crew-state.sh @ 6a2cd6c)
+===================================================================
+--- scenario: pending-relaunch
+    a freshly relaunched run is PENDING on this code, and an earlier run left a 'checks green' line in the status log
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      pending    fm/feat-relaunch 41adeb6  2026-08-25 22:09
+      completed  fm/feat-relaunch 41adeb6  2026-08-24 09:00
+    (worktree tip = 41adeb6; rebased in-flight head = 24204aa)
+
+$ tail -1 state/relaunch.status
+    done: PR https://github.com/o/r/pull/9 checks green
+
+$ fm-crew-state.sh relaunch
+    state: unknown · source: run-step · runs list status: pending
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | unknown / run-step | ship | - | tmux | present | https://github.com/o/r/pull/9 | /tmp/fm-incident.aiqBNd/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> false  (surfaced to the captain as not-working)
+
+===================================================================
+  AFTER THE FIX   (bin/fm-crew-state.sh @ 2fdf6a9)
+===================================================================
+--- scenario: pending-relaunch
+    a freshly relaunched run is PENDING on this code, and an earlier run left a 'checks green' line in the status log
+
+$ no-mistakes runs --limit 40
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      pending    fm/feat-relaunch cab31fa  2026-08-25 22:09
+      completed  fm/feat-relaunch cab31fa  2026-08-24 09:00
+    (worktree tip = cab31fa; rebased in-flight head = 57c658f)
+
+$ tail -1 state/relaunch.status
+    done: PR https://github.com/o/r/pull/9 checks green
+
+$ fm-crew-state.sh relaunch
+    state: working · source: run-step · validating (pending)
+
+$ fm-fleet-view.sh   (captain's board, 'Under Way' row)
+    ## Under Way
+    | ID | Current | Kind | Repo/Project | Backend | Endpoint | Artifact | Path | Watch / return channel |
+    | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+    | relaunch | working / run-step | ship | - | tmux | present | https://github.com/o/r/pull/9 | /tmp/fm-incident.QRP2uv/wt | bin/fm-peek.sh fm-relaunch |
+    
+$ watcher predicate: crew_is_provably_working relaunch
+    -> true   (absorbed as working; NO failure escalation to the captain)
+
+
+===================================================================
+  APPENDIX: the residual path the script header documents as a
+  KNOWN LIMITATION - idle pane, no attributable run, and an earlier
+  run's terminal 'failed:' line still in the status log.
+  The fix removes the SUPERSEDED RUN as the source of the verdict;
+  the stale status-log line remains (deferred, documented).
+===================================================================
+-- BEFORE (6a2cd6c) --
+idle pane + earlier 'failed:' status-log line + unattributable newest run:
+    state: failed · source: run-step · run failed
+-- AFTER  (2fdf6a9) --
+idle pane + earlier 'failed:' status-log line + unattributable newest run:
+    state: failed · source: status-log · gate review found blockers
