@@ -1423,7 +1423,10 @@ test_missing_run_head_falls_back_to_current_state() {
 # progress evidence must suppress a false wedge escalation, and its absence -
 # including no attributable run at all - must never read as health.
 
-run_active_steps_running() {  # <branch> <last_activity> <pid>
+# <active_for> defaults to a step that started BEFORE any anchor these cases
+# use, so a fixture only opts in to step-start evidence by naming a short one.
+run_active_steps_running() {  # <branch> <last_activity> <pid> [active_for]
+  local active_for=${4:-9h9m}
   cat <<EOF
 run:
   id: "01RUN"
@@ -1435,11 +1438,12 @@ run:
     intent,completed,0,0
     review,running,0,0
   active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    review,running,3m4s,"$2","$3",starting
+    review,running,$active_for,"$2","$3",starting
 EOF
 }
 
-run_active_steps_fixing() {  # <branch> <last_activity> <pid>
+run_active_steps_fixing() {  # <branch> <last_activity> <pid> [active_for]
+  local active_for=${4:-9h9m}
   cat <<EOF
 run:
   id: "01RUN"
@@ -1451,7 +1455,7 @@ run:
     intent,completed,0,0
     review,fixing,1,0
   active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
-    review,fixing,40s,"$2","$3",fixing
+    review,fixing,$active_for,"$2","$3",fixing
 EOF
 }
 
@@ -1619,6 +1623,45 @@ test_probe_kind_and_meta_guards() {
   pass "probe: scout kind and missing metadata report no evidence"
 }
 
+# active_for is the third evidence source, and the only one that can speak for a
+# step which has not logged yet: the CLI renders last_activity as the literal
+# "unknown" until a step's first log line, and a step with no subprocess agent of
+# its own carries an empty agent_pid. A run that finished one step and started
+# the next INSIDE the quiet window is demonstrably advancing, and before this was
+# read the pane wedge-escalated seconds after that transition.
+test_probe_step_started_inside_quiet_window_is_progress() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-activefor)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  # The quiet window opened 240s ago (the FM_STALE_ESCALATE_SECS default).
+  make_anchor "$d/anchor" 240
+  # The run advanced a step 10s ago: no log line yet, and no agent subprocess of
+  # its own, so last_activity and agent_pid have nothing to say.
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe unknown "" 10s)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 0 "$rc" "a step that started inside the quiet window is positive progress"
+  assert_contains "$out" "step started 10s ago" "the probe reports the step-start evidence"
+
+  # The same row shape, but the step has held since before the window opened:
+  # nothing advanced during the quiet stretch, so the escalation must proceed.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe unknown "" 12m)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a step running since before the quiet window is not progress"
+  [ -z "$out" ] || fail "an outgrown step-start probe printed: $out"
+
+  # A step that keeps sitting still ages out of its own evidence: the anchor is
+  # rewritten at each deferral, so the same step cannot defer twice.
+  reset_fakes
+  make_anchor "$d/anchor" 5
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe unknown "" 10s)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a step that started before the CURRENT quiet window is not progress again"
+  pass "probe: a step that started inside the quiet window is progress, and ages out of it"
+}
+
 test_probe_quiet_prefixed_activity_is_still_activity() {
   reset_fakes
   local d out rc; d=$(new_case probe-quiet)
@@ -1777,6 +1820,7 @@ test_probe_fixing_step_counts_as_activity
 test_probe_quoted_commas_do_not_shift_columns
 test_probe_no_evidence_outcomes_all_fail
 test_probe_kind_and_meta_guards
+test_probe_step_started_inside_quiet_window_is_progress
 test_probe_quiet_prefixed_activity_is_still_activity
 test_probe_makes_one_bounded_cli_call
 test_probe_remote_meta_skips_the_ssh_round_trip

@@ -523,9 +523,10 @@ wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
 # (crew_pipeline_progressing_since in fm-classify-lib.sh, over
 # fm-crew-state.sh's probe mode). The pane and the rendered run step look
 # static, but the run's own active-steps evidence - a last_activity stamp newer
-# than the idle window, or a live agent pid - is the answer the supervisor had
-# to reconstruct by hand in the 2026-08-25 false escalations, and it is cheap
-# to establish, so the escalation is deferred rather than fired. Same DEFERRAL
+# than the idle window, a step that started inside that window, or a live agent
+# pid - is the answer the supervisor had to reconstruct by hand in the
+# 2026-08-25 false escalations, and it is cheap to establish, so the escalation
+# is deferred rather than fired. Same DEFERRAL
 # contract as wedge_defer_writing above: the idle timer restarts, a
 # .pipeline-since-<key> marker ages the whole chain so the pane still
 # re-surfaces once per PAUSE_RESURFACE_SECS through the shared

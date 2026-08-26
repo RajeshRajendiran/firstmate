@@ -59,11 +59,13 @@
 # state line. It exits 0 and prints one short evidence token iff the run-step
 # attribution below binds a full-fidelity `axi status` run to this crew AND that
 # run's active_steps table holds a running/fixing row with POSITIVE progress
-# evidence: a last_activity stamp newer than the anchor file's mtime, or a live
+# evidence: a last_activity stamp newer than the anchor file's mtime, an
+# active_for showing the step itself started after that mtime, or a live
 # agent_pid. Every other outcome exits 1 silently - no attributed run, a parked
-# or terminal run, a stale or unparseable last_activity, a dead agent_pid.
-# Absence of evidence is never read as health: callers keep their existing
-# escalation schedule on exit 1.
+# or terminal run, a step that has been running since before the anchor with a
+# stale or unparseable last_activity, a dead or absent agent_pid. Absence of
+# evidence is never read as health: callers keep their existing escalation
+# schedule on exit 1.
 #
 # Because only that full-fidelity read can carry step detail, probe mode makes
 # exactly ONE bounded no-mistakes call and skips every fallback whose answer it
@@ -546,20 +548,13 @@ nm_row_fields() {  # <row>
   }'
 }
 
-# Seconds expressed by a last_activity "<duration> ago: ..." prefix, such as
-# "10s", "1m42s", or "2h46m". The CLI renders that prefix as an optional
-# literal "quiet " (prepended once the step has been silent longer than its
-# step_quiet_warning threshold) followed by the compact duration, so the prefix
-# is stripped before the walk: "quiet " marks the stamp as old, it does not
-# change what the stamp measures, and a quiet-but-still-recent step is exactly
-# the silent-but-busy case this probe exists to see. Nothing is returned when
-# what remains is not a parseable compact duration (a future format, prose, the
-# CLI's own "unknown"): an unparseable field is no evidence, never a guessed age.
-nm_ago_seconds() {  # <last_activity field>
-  local s=$1 dur num total=0
-  case "$s" in *" ago"*) ;; *) return 1 ;; esac
-  dur=${s%% ago*}
-  dur=${dur#quiet }
+# Seconds expressed by one compact duration - the CLI's single elapsed-time
+# rendering, emitted as "10s", "1m42s", "2h46m" or "3d4h" - or nothing when the
+# value is not one: an unparseable field is no evidence, never a guessed age.
+# Both duration columns the probe reads are rendered by that one formatter, so
+# they share this one parser.
+nm_compact_seconds() {  # <compact duration>
+  local dur=$1 num total=0
   [ -n "$dur" ] || return 1
   while [ -n "$dur" ]; do
     num=${dur%%[!0-9]*}
@@ -577,12 +572,40 @@ nm_ago_seconds() {  # <last_activity field>
   printf '%s' "$total"
 }
 
+# Seconds expressed by a last_activity "<duration> ago: ..." prefix. The CLI
+# renders that prefix as an optional literal "quiet " (prepended once the step
+# has been silent longer than its step_quiet_warning threshold) followed by the
+# compact duration, so the prefix is stripped before the parse: "quiet " marks
+# the stamp as old, it does not change what the stamp measures, and a
+# quiet-but-still-recent step is exactly the silent-but-busy case this probe
+# exists to see. Nothing is returned for a value carrying no " ago" duration at
+# all, which includes the CLI's own "unknown" for a step that has not logged yet.
+nm_ago_seconds() {  # <last_activity field>
+  local s=$1 dur
+  case "$s" in *" ago"*) ;; *) return 1 ;; esac
+  dur=${s%% ago*}
+  nm_compact_seconds "${dur#quiet }"
+}
+
 # Probe-mode evaluation - exits with a verdict, never returns. 0 plus one short
 # evidence token when the attributed full-fidelity run shows POSITIVE progress
-# since the anchor: a running/fixing active_steps row whose last_activity is
-# newer than the anchor, or whose agent_pid names a live process. 1 for every
-# other outcome. The token is informational (it lands in a deferral reason a
-# human may read); the exit status is the contract.
+# since the anchor, read from a running/fixing active_steps row in the order the
+# three evidence sources are trustworthy: a last_activity stamp newer than the
+# anchor, an active_for saying the step ITSELF started after the anchor, or an
+# agent_pid naming a live process. 1 for every other outcome. The token is
+# informational (it lands in a deferral reason a human may read); the exit
+# status is the contract.
+#
+# active_for is the only source that can speak for a step which has not logged
+# anything yet: the CLI renders last_activity as the literal "unknown" until the
+# step's first log line, and a step with no subprocess agent of its own carries
+# an empty agent_pid, so a run that finished one step and started the next
+# inside the quiet window would otherwise look like no evidence at all. Its
+# reading is deliberately narrow - the step started AFTER the quiet window
+# opened, therefore the run advanced during that window - so a step that has sat
+# in one place since before the window ages out of it exactly as it should, and
+# it cannot keep a frozen run deferred: staying frozen is precisely what makes
+# active_for outgrow the anchor.
 #
 # A live agent_pid counts even when last_activity is old, because a
 # legitimately silent-but-busy step (a long test run producing no output) ages
@@ -592,8 +615,8 @@ nm_ago_seconds() {  # <last_activity field>
 # callers treat this as a deferral with a bounded re-surface cadence, never as
 # a cancellation: nothing here can hide a genuinely frozen run.
 probe_run_progress_exit() {
-  local anchor_epoch now rows row fields step st la pid secs
-  local f1='' f2='' f4='' f5=''
+  local anchor_epoch now rows row fields step st af la pid secs
+  local f1='' f2='' f3='' f4='' f5=''
   [ "$HAVE_RUN" = 1 ] && [ "$RUN_SOURCE" = full ] || exit 1
   anchor_epoch=$(anchor_mtime_epoch)
   case "$anchor_epoch" in ''|*[!0-9]*) exit 1 ;; esac
@@ -605,11 +628,11 @@ probe_run_progress_exit() {
   while IFS= read -r row; do
     case "$row" in *,*) ;; *) continue ;; esac
     fields=$(nm_row_fields "$row")
-    f1=''; f2=''; f4=''; f5=''
+    f1=''; f2=''; f3=''; f4=''; f5=''
     {
       IFS= read -r f1 || true
       IFS= read -r f2 || true
-      IFS= read -r _ || true
+      IFS= read -r f3 || true
       IFS= read -r f4 || true
       IFS= read -r f5 || true
     } <<< "$fields"
@@ -620,6 +643,13 @@ probe_run_progress_exit() {
     if secs=$(nm_ago_seconds "$la"); then
       if [ $(( now - secs )) -ge "$anchor_epoch" ]; then
         printf 'pipeline %s active: last activity %ss ago\n' "$step" "$secs"
+        exit 0
+      fi
+    fi
+    af=$(strip_quotes "$f3")
+    if secs=$(nm_compact_seconds "$af"); then
+      if [ $(( now - secs )) -ge "$anchor_epoch" ]; then
+        printf 'pipeline %s active: step started %ss ago, inside the quiet window\n' "$step" "$secs"
         exit 0
       fi
     fi
