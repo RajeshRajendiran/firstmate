@@ -38,7 +38,8 @@
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
 #                          the run step cannot show. A pane whose own attributed
-#                          no-mistakes run shows recent activity or a live
+#                          no-mistakes run shows recent activity, an active step
+#                          that started inside the quiet window, or a live
 #                          agent_pid is likewise deferred
 #                          (wedge_defer_pipeline), because the quiet pane can sit
 #                          idle while the pipeline's own agent processes keep
@@ -576,8 +577,9 @@ clear_deferral_tracking() {  # <window-key>
 # worktree walk plus one bounded fm-crew-state probe call per window per
 # STALE_ESCALATE_SECS, never per poll. Both probes are positive-evidence-only:
 # a pane whose own worktree is still being written, or whose own attributed
-# pipeline run shows recent activity or a live agent, is NOT wedged, so its
-# escalation is deferred on the bounded recheck cadence; any other outcome -
+# pipeline run shows recent activity, an active step that started inside the
+# quiet window, or a live agent, is NOT wedged, so its escalation is deferred
+# on the bounded recheck cadence; any other outcome -
 # including no attributable run at all - falls through to the unchanged
 # escalation, which keeps its demand-deep-inspection history. The probes do not
 # weaken the detector; they stop it from crying wolf on a provably-alive run.

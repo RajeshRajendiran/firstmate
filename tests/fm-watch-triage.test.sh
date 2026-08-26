@@ -2165,7 +2165,8 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
 # activity and a live agent pid, because the detector read the PANE while the
 # work happened in the pipeline's own processes. The at-threshold branch now
 # consults the task's own pipeline state through fm-crew-state.sh's probe mode:
-# recent activity or a live agent defers the escalation; every no-evidence
+# recent activity, a step that started inside the quiet window, or a live agent
+# defers the escalation; every no-evidence
 # outcome - including no attributable run at all - keeps the unchanged schedule,
 # escalation counter, and demand-deep-inspection history. Both halves are
 # asserted on the SAME fixture so only the pipeline evidence differs.

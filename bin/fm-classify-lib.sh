@@ -1230,12 +1230,15 @@ crew_is_paused() {  # <id>
 }
 
 # 0 (with one short evidence token on stdout) when crew <id>'s OWN no-mistakes
-# run shows positive progress since <anchor-file>: the probe mode of
-# fm-crew-state.sh answers this, so run attribution, the active_steps parse,
-# and the evidence rules stay with their one owner. Every no-evidence outcome
-# returns 1 silently - no attributed run, coarse-only attribution, a parked or
-# terminal run, stale or unparseable activity, a dead agent - so the caller's
-# escalation schedule is untouched unless the progress evidence is real. NOT a
+# run shows positive progress since <anchor-file> - a last_activity stamp newer
+# than the anchor, an active step that STARTED after the anchor, or a live agent
+# pid: the probe mode of fm-crew-state.sh answers this, so run attribution, the
+# active_steps parse, and the evidence rules stay with their one owner. Every
+# no-evidence outcome returns 1 silently - no run attributable to this crew at
+# full fidelity, a parked or terminal run, or an active step that has been
+# running since before the anchor whose activity is stale or unparseable and
+# whose agent is dead or absent - so the caller's escalation schedule is
+# untouched unless the progress evidence is real. NOT a
 # pure status-file read (see the header): one bounded no-mistakes call inside
 # fm-crew-state.sh, which callers must reach only when they are otherwise about
 # to escalate, never on every poll.
