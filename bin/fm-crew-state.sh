@@ -60,11 +60,16 @@
 # attribution below binds a full-fidelity `axi status` run to this crew AND that
 # run's active_steps table holds a running/fixing row with POSITIVE progress
 # evidence: a last_activity stamp newer than the anchor file's mtime, or a live
-# agent_pid. Every other outcome exits 1 silently - no attributed run,
-# coarse-only attribution (the runs list has no step detail), a parked or
-# terminal run, a stale or unparseable last_activity, a dead agent_pid. Absence
-# of evidence is never read as health: callers keep their existing escalation
-# schedule on exit 1.
+# agent_pid. Every other outcome exits 1 silently - no attributed run, a parked
+# or terminal run, a stale or unparseable last_activity, a dead agent_pid.
+# Absence of evidence is never read as health: callers keep their existing
+# escalation schedule on exit 1.
+#
+# Because only that full-fidelity read can carry step detail, probe mode makes
+# exactly ONE bounded no-mistakes call and skips every fallback whose answer it
+# could not use anyway - the coarse runs-list lookup (a bare status word) and
+# the remote-endpoint ssh round trip - so the caller's poll loop pays one local
+# read, not two calls plus a network hop, for a verdict it already knows.
 #
 # Read-only and side-effect free. The default state-read mode always exits 0 on
 # a successful read regardless of state; exit 2 is a usage error (no id, an
@@ -117,9 +122,11 @@ SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional. In probe mode,
 # reaching emit means the probe's evaluation below saw no positive progress
-# evidence (unknown crew, gone worktree, remote endpoint, terminal or
-# unparsable run) - and the probe contract for every such outcome is the silent
-# no-evidence exit, not a rendered state line.
+# evidence (unknown crew, gone worktree, terminal or unparsable run) - and the
+# probe contract for every such outcome is the silent no-evidence exit, not a
+# rendered state line. This is the backstop, not the only such exit: the arms
+# that could only ever emit in probe mode short-circuit before doing their own
+# work.
 emit() {  # <state> <source> [detail]
   [ "$PROBE_MODE" = 1 ] && exit 1
   local line="state: $1${SEP}source: $2"
@@ -191,6 +198,12 @@ LOG_VERB=$(status_line_verb "$LOG_LINE")
 # down or dead mate; only the remote host's own dead/missing verdict may say
 # the endpoint is actually gone.
 if [ -n "$REMOTE_HOST" ]; then
+  # Probe mode answers only from a locally attributed full-fidelity run, and a
+  # remote mate has no such run here (its worktree is a path on its own host),
+  # so every branch below would reach emit and exit 1 anyway. Answer no evidence
+  # without paying the ssh round trip: the probe runs inside the watcher's poll
+  # loop and its contract is the one bounded local read.
+  [ "$PROBE_MODE" = 1 ] && exit 1
   if ! REMOTE_STATE=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-on.sh" "$ID" \
     fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
     REMOTE_STATE=
@@ -484,10 +497,18 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # primary call means the CLI itself did not respond, so retrying it
       # immediately with a second bounded call would just double the wait
       # for no better answer.
-      COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
-      if [ -n "$COARSE_STATUS" ]; then
-        HAVE_RUN=1
-        RUN_SOURCE=coarse
+      # Skipped entirely in probe mode: a coarse row is a bare status word with
+      # no step detail, so the probe below rejects it as no evidence no matter
+      # what it says. Paying a second bounded CLI call for an answer that cannot
+      # change the verdict would double the probe's wall clock inside the
+      # watcher's poll loop, and the no-attributable-run case this arm handles
+      # is precisely the common one.
+      if [ "$PROBE_MODE" != 1 ]; then
+        COARSE_STATUS=$(nm_runs_status_for_branch "$CREW_BRANCH")
+        if [ -n "$COARSE_STATUS" ]; then
+          HAVE_RUN=1
+          RUN_SOURCE=coarse
+        fi
       fi
     fi
   fi
@@ -526,13 +547,19 @@ nm_row_fields() {  # <row>
 }
 
 # Seconds expressed by a last_activity "<duration> ago: ..." prefix, such as
-# "10s", "1m42s", or "2h46m", or nothing when the value does not start with a
-# parseable compact duration (a future format, prose): an unparseable field is
-# no evidence, never a guessed age.
+# "10s", "1m42s", or "2h46m". The CLI renders that prefix as an optional
+# literal "quiet " (prepended once the step has been silent longer than its
+# step_quiet_warning threshold) followed by the compact duration, so the prefix
+# is stripped before the walk: "quiet " marks the stamp as old, it does not
+# change what the stamp measures, and a quiet-but-still-recent step is exactly
+# the silent-but-busy case this probe exists to see. Nothing is returned when
+# what remains is not a parseable compact duration (a future format, prose, the
+# CLI's own "unknown"): an unparseable field is no evidence, never a guessed age.
 nm_ago_seconds() {  # <last_activity field>
   local s=$1 dur num total=0
   case "$s" in *" ago"*) ;; *) return 1 ;; esac
   dur=${s%% ago*}
+  dur=${dur#quiet }
   [ -n "$dur" ] || return 1
   while [ -n "$dur" ]; do
     num=${dur%%[!0-9]*}

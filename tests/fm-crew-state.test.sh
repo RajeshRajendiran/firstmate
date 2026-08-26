@@ -62,6 +62,9 @@ make_fakebin() {  # <dir> -> echoes fakebin path
   cat > "$fb/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 set -u
+# When FM_FAKE_NM_CALL_LOG names a file, every invocation appends its argv there,
+# so a test can assert HOW MANY bounded CLI calls a code path actually costs.
+if [ -n "${FM_FAKE_NM_CALL_LOG:-}" ]; then printf '%s\n' "$*" >> "$FM_FAKE_NM_CALL_LOG"; fi
 case "${1:-}" in
   axi)
     shift
@@ -170,6 +173,8 @@ reset_fakes() {
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_AGENT_STATUS=""
   FM_FAKE_CI_LOGS=""
+  FM_FAKE_NM_CALL_LOG=""
+  export FM_FAKE_NM_CALL_LOG
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
 }
@@ -1614,6 +1619,95 @@ test_probe_kind_and_meta_guards() {
   pass "probe: scout kind and missing metadata report no evidence"
 }
 
+test_probe_quiet_prefixed_activity_is_still_activity() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-quiet)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  # Anchor 30m back, standing in for an operator-raised FM_STALE_ESCALATE_SECS.
+  make_anchor "$d/anchor" 1800
+  # The real CLI prepends a literal "quiet " to last_activity once the step has
+  # been silent past its step_quiet_warning threshold (default 10m). A step that
+  # last spoke 12m ago is quiet by that rule yet still far newer than this
+  # anchor, so it is exactly the silent-but-busy progress the probe must report.
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "quiet 12m3s ago: log: running the test suite" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 0 "$rc" "a quiet-prefixed last_activity newer than the anchor is still progress evidence"
+  assert_contains "$out" "last activity 723s ago" "the quiet prefix is stripped and the compact duration parsed"
+
+  # The prefix must not rescue a genuinely stale stamp either: same shape, but
+  # older than the anchor and with a dead agent, so no evidence.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "quiet 46m ago: log: running the test suite" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a quiet-prefixed stamp older than the anchor is still no evidence"
+  [ -z "$out" ] || fail "a stale quiet-prefixed probe printed: $out"
+  pass "probe: a quiet-prefixed last_activity is parsed as the activity age it reports"
+}
+
+# The probe runs inside the watcher's poll loop, so its cost is part of its
+# contract: exactly one bounded no-mistakes call, and never the coarse runs-list
+# fallback whose bare status word it would have to reject anyway.
+test_probe_makes_one_bounded_cli_call() {
+  reset_fakes
+  local d out rc short calls; d=$(new_case probe-callcount)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  # The common no-attributable-run shape: bare `axi status` answers with another
+  # branch's run while the runs list does hold a row for this branch.
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-probe ${short}  2026-08-25 22:05
+"
+  FM_FAKE_NM_CALL_LOG="$d/nm-calls"; export FM_FAKE_NM_CALL_LOG
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a run the probe cannot bind full-fidelity is no evidence"
+  calls=$(wc -l < "$d/nm-calls" | tr -d ' ')
+  [ "$calls" = 1 ] || fail "probe mode made $calls no-mistakes calls, not the one its contract describes: $(cat "$d/nm-calls")"
+  grep -q '^runs' "$d/nm-calls" && fail "probe mode paid for the coarse runs-list fallback it can never use"
+
+  # The same fixture in the default state-read mode DOES use the fallback, so the
+  # skip is scoped to the probe rather than a lost capability.
+  : > "$d/nm-calls"
+  out=$(PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" probe); rc=$?
+  expect_code 0 "$rc" "the state read still answers"
+  assert_contains "$out" "source: run-step" "the state read still attributes this branch's run through the runs list"
+  grep -q '^runs' "$d/nm-calls" || fail "the state read lost its coarse runs-list fallback"
+  pass "probe: one bounded CLI call, and the coarse fallback stays available to the state read"
+}
+
+# A remote mate has no locally attributable run, so probe mode must answer no
+# evidence without paying the ssh round trip the state read needs.
+test_probe_remote_meta_skips_the_ssh_round_trip() {
+  reset_fakes
+  local d rc; d=$(setup_remote_case probe-remote)
+  make_fakebin "$d" >/dev/null
+  make_anchor "$d/anchor" 600
+  cat > "$d/fakebin/marker-ssh" <<'SH'
+#!/usr/bin/env bash
+cat > /dev/null
+: > "$FM_FAKE_SSH_MARKER"
+printf 'alive\n'
+exit 0
+SH
+  chmod +x "$d/fakebin/marker-ssh"
+  PATH="$d/fakebin:$PATH" FM_HOME="$d" FM_STATE_OVERRIDE="$d/state" \
+    FM_SSH_BIN="$d/fakebin/marker-ssh" FM_FAKE_SSH_MARKER="$d/ssh-was-called" \
+    "$CREW_STATE" rsm --run-progress-since "$d/anchor" >/dev/null 2>&1; rc=$?
+  expect_code 1 "$rc" "a remote mate reports no local progress evidence"
+  [ ! -e "$d/ssh-was-called" ] || fail "probe mode paid for a remote endpoint round trip it can never use"
+
+  # The state read still consults the remote endpoint over the same seam.
+  PATH="$d/fakebin:$PATH" FM_HOME="$d" FM_STATE_OVERRIDE="$d/state" \
+    FM_SSH_BIN="$d/fakebin/marker-ssh" FM_FAKE_SSH_MARKER="$d/ssh-was-called" \
+    "$CREW_STATE" rsm >/dev/null 2>&1 || true
+  [ -e "$d/ssh-was-called" ] || fail "the state read lost its remote endpoint probe"
+  pass "probe: a remote meta answers no evidence without an ssh round trip"
+}
+
 test_probe_usage_errors() {
   local rc
   "$CREW_STATE" someid --run-progress-since /nonexistent-anchor >/dev/null 2>&1; rc=$?
@@ -1683,6 +1777,9 @@ test_probe_fixing_step_counts_as_activity
 test_probe_quoted_commas_do_not_shift_columns
 test_probe_no_evidence_outcomes_all_fail
 test_probe_kind_and_meta_guards
+test_probe_quiet_prefixed_activity_is_still_activity
+test_probe_makes_one_bounded_cli_call
+test_probe_remote_meta_skips_the_ssh_round_trip
 test_probe_usage_errors
 
 echo "all fm-crew-state tests passed"

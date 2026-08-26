@@ -2271,7 +2271,8 @@ test_pipeline_deferral_resurfaces_on_the_bounded_cadence() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "a long-running pipeline deferral never re-surfaced on the bounded cadence"
   grep -F "stale: $window" "$out" >/dev/null || fail "the pipeline-deferral recheck did not print a stale wake"
-  grep -F "pipeline run has been progressing" "$out" >/dev/null || fail "the pipeline-deferral recheck was not labeled with its evidence"
+  grep -F "pipeline test active: agent pid 4242 alive" "$out" >/dev/null || fail "the pipeline-deferral recheck was not labeled with the evidence behind it"
+  grep -F "deferred for" "$out" >/dev/null || fail "the pipeline-deferral recheck did not report how long the pane has been deferring"
   grep -F "possible wedge" "$out" >/dev/null && fail "a pipeline-deferral recheck was mislabeled a possible wedge"
   [ -e "$state/.pipeline-resurfaced-$key" ] || fail "the pipeline-deferral re-surface throttle marker was not recorded"
   [ ! -e "$state/.wedge-escalations-$key" ] || fail "a pipeline-deferral recheck advanced the wedge escalation counter"

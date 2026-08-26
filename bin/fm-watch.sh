@@ -518,19 +518,26 @@ wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
   triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
 }
 
-# Defer ONE wedge escalation for a pane whose OWN no-mistakes pipeline run is
-# demonstrably progressing behind the quiet pane (crew_pipeline_progressing_since
-# in fm-classify-lib.sh, over fm-crew-state.sh's probe mode). The pane and the
-# rendered run step look static, but the run's own active-steps evidence - a
-# last_activity stamp newer than the idle window, or a live agent pid - is the
-# answer the supervisor had to reconstruct by hand in the 2026-08-25 false
-# escalations, and it is cheap to establish, so the escalation is deferred
-# rather than fired. Same DEFERRAL contract as wedge_defer_writing above: the
-# idle timer restarts, a .pipeline-since-<key> marker ages the whole chain so
-# the pane still re-surfaces once per PAUSE_RESURFACE_SECS through the shared
+# Defer ONE wedge escalation for a pane whose OWN no-mistakes pipeline run
+# shows positive progress evidence behind the quiet pane
+# (crew_pipeline_progressing_since in fm-classify-lib.sh, over
+# fm-crew-state.sh's probe mode). The pane and the rendered run step look
+# static, but the run's own active-steps evidence - a last_activity stamp newer
+# than the idle window, or a live agent pid - is the answer the supervisor had
+# to reconstruct by hand in the 2026-08-25 false escalations, and it is cheap
+# to establish, so the escalation is deferred rather than fired. Same DEFERRAL
+# contract as wedge_defer_writing above: the idle timer restarts, a
+# .pipeline-since-<key> marker ages the whole chain so the pane still
+# re-surfaces once per PAUSE_RESURFACE_SECS through the shared
 # resurface_absorbed above, and the escalation counter is left alone, so a run
 # that hangs forever still re-surfaces on the bounded cadence and a later
 # genuine escalation keeps the demand-deep-inspection history it had earned.
+# The re-surface reason states what was actually observed - how long this pane
+# has been deferring, and the evidence token behind the latest deferral - and
+# deliberately does NOT claim the run advanced over that whole stretch: a live
+# agent pid is a weak clock (an agent can outlive its own progress, and pids
+# are recycled), so the human it wakes is asked to confirm the run is still
+# advancing rather than told that it is.
 wedge_defer_pipeline() {  # <window> <since-file> <triage-label> <idle-age> <evidence>
   local win=$1 since_file=$2 label=$3 age=$4 evidence=$5 key psf page
   key=$(window_key "$win")
@@ -539,8 +546,8 @@ wedge_defer_pipeline() {  # <window> <since-file> <triage-label> <idle-age> <evi
   page=$(age_of "$psf")
   date +%s > "$since_file"
   resurface_absorbed "$win" "$STATE/.pipeline-resurfaced-$key" "$page" \
-    "stale: $win (idle ${age}s, its pipeline run has been progressing for ${page}s ($evidence), rechecked on a long cadence not a wedge; confirm the run is still advancing)"
-  triage_log "absorbed $label (pipeline progressed since the idle window opened: $evidence; idle ${age}s): $win"
+    "stale: $win (idle ${age}s, deferred for ${page}s on pipeline progress evidence, latest: $evidence; rechecked on a long cadence not a wedge; confirm the run is still advancing)"
+  triage_log "absorbed $label (pipeline progress evidence: $evidence; idle ${age}s): $win"
 }
 
 # Drop a window's deferral chains - worktree-write AND pipeline-progress -
