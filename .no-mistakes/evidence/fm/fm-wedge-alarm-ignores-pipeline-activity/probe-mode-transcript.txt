@@ -1,0 +1,6 @@
+$ bin/fm-crew-state.sh probe --run-progress-since <anchor 30m old>
+# pane quiet 30+ min; pipeline step last spoke (quiet) 11m40s ago, live agent pid
+exit=0 stdout=pipeline test active: last activity 700s ago
+
+# same anchor, but the run belongs to another branch (no attributable run):
+exit=1 stdout=''  <- silence = fall back to today's escalation behaviour

@@ -1,0 +1,18 @@
+== Scenario 1: BASE code (before fix) - quiet pane, pipeline demonstrably running ==
+poll 1: watcher exited: stale: test:base-defect (idle 501s, possible wedge, escalation 1)
+poll 2: watcher exited: stale: test:base-defect (idle 501s, possible wedge, escalation 2)
+poll 3: watcher exited: stale: test:base-defect (idle 500s, possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone)
+poll 4: watcher exited: stale: test:base-defect (idle 501s, possible wedge, escalation 4, demand-deep-inspection: same pane has wedge-escalated 4 times in a row - do not re-absorb on the run-step/pane state alone)
+
+== Scenario 2: FIXED code (this change) - identical pane and pipeline ==
+poll 1: absorbed quietly (no wake enqueued; wedge-escalation counter: none)
+poll 2: absorbed quietly (no wake enqueued; wedge-escalation counter: none)
+poll 3: absorbed quietly (no wake enqueued; wedge-escalation counter: none)
+poll 4: absorbed quietly (no wake enqueued; wedge-escalation counter: none)
+
+== Scenario 3: FIXED code - same pane but NO attributable pipeline progress ==
+   (absence of evidence must NOT read as health; unchanged schedule incl. deep inspection)
+poll 1: ESCALATED (possible wedge, escalation 3, demand-deep-inspection: same pane has wedge-escalated 3 times in a row - do not re-absorb on the run-step/pane state alone) [counter now: 3; demand-deep-inspection mentions: 1]
+poll 2: ESCALATED () [counter now: 3; demand-deep-inspection mentions: 0]
+
+done.
