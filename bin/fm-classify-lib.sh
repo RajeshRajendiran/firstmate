@@ -1229,6 +1229,22 @@ crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
 }
 
+# 0 (with one short evidence token on stdout) when crew <id>'s OWN no-mistakes
+# run shows positive progress since <anchor-file>: the probe mode of
+# fm-crew-state.sh answers this, so run attribution, the active_steps parse,
+# and the evidence rules stay with their one owner. Every no-evidence outcome
+# returns 1 silently - no attributed run, coarse-only attribution, a parked or
+# terminal run, stale or unparseable activity, a dead agent - so the caller's
+# escalation schedule is untouched unless the progress evidence is real. NOT a
+# pure status-file read (see the header): one bounded no-mistakes call inside
+# fm-crew-state.sh, which callers must reach only when they are otherwise about
+# to escalate, never on every poll.
+crew_pipeline_progressing_since() {  # <id> <anchor-file>
+  local id=$1 anchor=$2
+  { [ -n "$id" ] && [ -f "$anchor" ]; } || return 1
+  "$FM_CREW_STATE_BIN" "$id" --run-progress-since "$anchor" 2>/dev/null
+}
+
 # Directories excluded from the worktree write probe below, and the depth it walks.
 # The excluded set is everything a supervisor read or a package manager can write
 # without the crew doing any work - .git first, so firstmate's own read-only git

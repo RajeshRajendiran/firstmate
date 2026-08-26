@@ -1408,6 +1408,221 @@ test_missing_run_head_falls_back_to_current_state() {
   pass "missing run head falls back instead of matching by branch"
 }
 
+# --- run-progress probe (--run-progress-since <anchor-file>) ------------------
+# The wedge detector's deferral predicate: one bounded axi-status read through
+# the SAME attribution path as the state read, answered as exit 0 plus one
+# evidence token only on POSITIVE progress (a running/fixing active_steps row
+# with last_activity newer than the anchor, or a live agent_pid), and exit 1
+# silently for every other outcome. The accept cases and the no-evidence cases
+# are pinned together because the safety property is their conjunction:
+# progress evidence must suppress a false wedge escalation, and its absence -
+# including no attributable run at all - must never read as health.
+
+run_active_steps_running() {  # <branch> <last_activity> <pid>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: running
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,running,0,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,running,3m4s,"$2","$3",starting
+EOF
+}
+
+run_active_steps_fixing() {  # <branch> <last_activity> <pid>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: fixing
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  findings: none
+  steps[2]{step,status,findings,duration_ms}:
+    intent,completed,0,0
+    review,fixing,1,0
+  active_steps[1]{step,status,active_for,last_activity,agent_pid,round}:
+    review,fixing,40s,"$2","$3",fixing
+EOF
+}
+
+# Set <file>'s mtime to <age-secs> in the past, portably (the same BSD/GNU
+# split set_mtime in fm-watch-triage.test.sh owns for its own use).
+make_anchor() {  # <file> <age-secs>
+  local f=$1 age=$2 epoch stamp
+  : > "$f"
+  epoch=$(( $(date +%s) - age ))
+  if stamp=$(date -r "$epoch" +%Y%m%d%H%M.%S 2>/dev/null); then
+    touch -t "$stamp" "$f"
+  else
+    stamp=$(date -d "@$epoch" +%Y%m%d%H%M.%S)
+    touch -t "$stamp" "$f"
+  fi
+}
+
+run_crew_state_probe() {  # <case-dir> <id> <anchor-file>
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" "$CREW_STATE" "$2" --run-progress-since "$3"
+}
+
+# A pid guaranteed dead: forked and reaped before the probe runs.
+dead_pid() {
+  local p
+  sleep 0.01 & p=$!
+  wait "$p" 2>/dev/null || true
+  printf '%s' "$p"
+}
+
+test_probe_recent_activity_defers() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-recent)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "30s ago: log: still reviewing" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 0 "$rc" "recent last_activity is positive progress evidence"
+  assert_contains "$out" "last activity 30s ago" "probe reports the activity evidence"
+  pass "probe: run with recent activity reports progress"
+}
+
+test_probe_live_agent_pid_defers_when_silent() {
+  reset_fakes
+  local d out rc live; d=$(new_case probe-livepid)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  sleep 60 & live=$!
+  # A silent-but-busy step (a long test run emitting no log lines): last_activity
+  # is older than the anchor, but the pipeline's agent is alive.
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "25m ago: log: starting the test suite" "$live")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  kill "$live" 2>/dev/null || true; wait "$live" 2>/dev/null || true
+  expect_code 0 "$rc" "a live agent pid is positive progress evidence even when silent"
+  assert_contains "$out" "agent pid $live alive" "probe reports the live-agent evidence"
+  pass "probe: silent step with a live agent pid reports progress"
+}
+
+test_probe_stale_activity_dead_agent_is_no_evidence() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-stale)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "2h3m ago: log: hung" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "stale activity with a dead agent is no evidence"
+  [ -z "$out" ] || fail "a no-evidence probe printed something: $out"
+  pass "probe: stale activity and dead agent leave the escalation schedule untouched"
+}
+
+test_probe_fixing_step_counts_as_activity() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-fixing)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  FM_FAKE_AXI_STATUS="$(run_active_steps_fixing fm/feat-probe "1m42s ago: log: applying fix, round 2" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 0 "$rc" "a fixing row with recent compound-duration activity is evidence"
+  assert_contains "$out" "last activity 102s ago" "compound 1m42s duration parsed to seconds"
+  pass "probe: a fixing step with recent activity reports progress"
+}
+
+test_probe_quoted_commas_do_not_shift_columns() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-commas)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "40s ago: log: reviewed a, b, and c" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 0 "$rc" "commas inside a quoted last_activity must not shift the columns"
+  pass "probe: quoted commas in last_activity are parsed as one field"
+}
+
+test_probe_no_evidence_outcomes_all_fail() {
+  reset_fakes
+  local d out rc short; d=$(new_case probe-none)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/probe.meta" "window=fm:fm-probe" "worktree=$d/wt" "kind=ship"
+  make_anchor "$d/anchor" 600
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+
+  # Unparseable activity prose + dead agent: no evidence, never a guessed age.
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "just now: log: hi" "$(dead_pid)")"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "unparseable last_activity is no evidence"
+  [ -z "$out" ] || fail "unparseable-activity probe printed: $out"
+
+  # Parked at a gate: no active_steps table at all.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_parked fm/feat-probe)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a gate-parked run is not progress evidence"
+
+  # Terminal run.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_passed fm/feat-probe)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a terminal run is not progress evidence"
+
+  # Run belongs to another branch; this branch has no run at all.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "another branch's run is not this crew's progress"
+
+  # Coarse-only attribution (found via the runs list) carries no step detail,
+  # so it cannot be progress evidence either - the safe direction.
+  reset_fakes
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-probe ${short}  2026-08-25 22:05
+"
+  out=$(run_crew_state_probe "$d" probe "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "coarse-only run attribution has no step detail to read"
+
+  pass "probe: unparseable, parked, terminal, foreign, and coarse-only outcomes are all no evidence"
+}
+
+test_probe_kind_and_meta_guards() {
+  reset_fakes
+  local d out rc; d=$(new_case probe-guards)
+  make_repo_on_branch "$d/wt" fm/feat-probe
+  make_fakebin "$d" >/dev/null
+  make_anchor "$d/anchor" 600
+
+  # A scout never drives a no-mistakes run: skip the lookup entirely.
+  fm_write_meta "$d/state/scout.meta" "window=fm:fm-scout" "worktree=$d/wt" "kind=scout"
+  FM_FAKE_AXI_STATUS="$(run_active_steps_running fm/feat-probe "10s ago: log: working" "1")"
+  out=$(run_crew_state_probe "$d" scout "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "a scout's probe never reads a run"
+
+  # No meta at all.
+  out=$(run_crew_state_probe "$d" ghost "$d/anchor"); rc=$?
+  expect_code 1 "$rc" "missing meta is no evidence"
+
+  pass "probe: scout kind and missing metadata report no evidence"
+}
+
+test_probe_usage_errors() {
+  local rc
+  "$CREW_STATE" someid --run-progress-since /nonexistent-anchor >/dev/null 2>&1; rc=$?
+  expect_code 2 "$rc" "missing anchor file is a usage error"
+  "$CREW_STATE" someid --bogus-flag >/dev/null 2>&1; rc=$?
+  expect_code 2 "$rc" "unknown flag is a usage error"
+  pass "probe: usage errors exit 2"
+}
+
 test_active_run_is_authoritative
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
@@ -1461,5 +1676,13 @@ test_historical_same_branch_rewritten_head_not_current
 test_active_run_descendant_fix_head_remains_current
 test_local_advanced_past_run_head_invalidates
 test_missing_run_head_falls_back_to_current_state
+test_probe_recent_activity_defers
+test_probe_live_agent_pid_defers_when_silent
+test_probe_stale_activity_dead_agent_is_no_evidence
+test_probe_fixing_step_counts_as_activity
+test_probe_quoted_commas_do_not_shift_columns
+test_probe_no_evidence_outcomes_all_fail
+test_probe_kind_and_meta_guards
+test_probe_usage_errors
 
 echo "all fm-crew-state tests passed"

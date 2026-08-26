@@ -54,8 +54,21 @@
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# Probe mode: `fm-crew-state.sh <id> --run-progress-since <anchor-file>` answers
+# one bounded liveness question for the wedge detector instead of printing the
+# state line. It exits 0 and prints one short evidence token iff the run-step
+# attribution below binds a full-fidelity `axi status` run to this crew AND that
+# run's active_steps table holds a running/fixing row with POSITIVE progress
+# evidence: a last_activity stamp newer than the anchor file's mtime, or a live
+# agent_pid. Every other outcome exits 1 silently - no attributed run,
+# coarse-only attribution (the runs list has no step detail), a parked or
+# terminal run, a stale or unparseable last_activity, a dead agent_pid. Absence
+# of evidence is never read as health: callers keep their existing escalation
+# schedule on exit 1.
+#
+# Read-only and side-effect free. The default state-read mode always exits 0 on
+# a successful read regardless of state; exit 2 is a usage error (no id, an
+# unknown flag, or a missing anchor file).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,7 +88,20 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
 ID=${1:-}
-[ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
+PROBE_MODE=0
+ANCHOR=""
+case "${2:-}" in
+  "") ;;
+  --run-progress-since)
+    PROBE_MODE=1
+    ANCHOR=${3:-}
+    ;;
+  *) ID="" ;;
+esac
+if [ -z "$ID" ] || { [ "$PROBE_MODE" = 1 ] && [ ! -f "$ANCHOR" ]; }; then
+  echo "usage: fm-crew-state.sh <id> [--run-progress-since <anchor-file>]" >&2
+  exit 2
+fi
 
 META="$STATE/$ID.meta"
 LOG="$STATE/$ID.status"
@@ -89,8 +115,13 @@ FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
 
-# Emit the one canonical line and exit 0. Detail is optional.
+# Emit the one canonical line and exit 0. Detail is optional. In probe mode,
+# reaching emit means the probe's evaluation below saw no positive progress
+# evidence (unknown crew, gone worktree, remote endpoint, terminal or
+# unparsable run) - and the probe contract for every such outcome is the silent
+# no-evidence exit, not a rendered state line.
 emit() {  # <state> <source> [detail]
+  [ "$PROBE_MODE" = 1 ] && exit 1
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   printf '%s\n' "$line"
@@ -462,7 +493,124 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   fi
 fi
 
+# --- run-progress probe (probe mode only) ------------------------------------
+
+# Anchor mtime in epoch seconds; empty when unreadable, which the caller treats
+# as no evidence rather than comparing against a fabricated epoch.
+anchor_mtime_epoch() {
+  if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then
+    stat -f %m "$ANCHOR" 2>/dev/null
+  else
+    stat -c %Y "$ANCHOR" 2>/dev/null
+  fi
+}
+
+# Split one TOON table row into fields, one per output line, honoring double
+# quotes so a last_activity message containing commas cannot shift the columns.
+# An unescaped quote inside the message itself (if the emitter ever produces
+# one) mis-splits, but every field a probe consumer then reads fails its shape
+# check - a non-duration, a non-pid - and the row reads as no evidence, which
+# is the fail-safe direction.
+nm_row_fields() {  # <row>
+  awk -v s="$1" 'BEGIN{
+    f = ""; inq = 0
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (inq) { if (c == "\"") inq = 0; else f = f c }
+      else if (c == "\"") inq = 1
+      else if (c == ",") { print f; f = "" }
+      else f = f c
+    }
+    print f
+  }'
+}
+
+# Seconds expressed by a last_activity "<duration> ago: ..." prefix, such as
+# "10s", "1m42s", or "2h46m", or nothing when the value does not start with a
+# parseable compact duration (a future format, prose): an unparseable field is
+# no evidence, never a guessed age.
+nm_ago_seconds() {  # <last_activity field>
+  local s=$1 dur num total=0
+  case "$s" in *" ago"*) ;; *) return 1 ;; esac
+  dur=${s%% ago*}
+  [ -n "$dur" ] || return 1
+  while [ -n "$dur" ]; do
+    num=${dur%%[!0-9]*}
+    [ -n "$num" ] || return 1
+    dur=${dur#"$num"}
+    case "$dur" in
+      s*) total=$(( total + num )) ;;
+      m*) total=$(( total + num * 60 )) ;;
+      h*) total=$(( total + num * 3600 )) ;;
+      d*) total=$(( total + num * 86400 )) ;;
+      *) return 1 ;;
+    esac
+    dur=${dur#?}
+  done
+  printf '%s' "$total"
+}
+
+# Probe-mode evaluation - exits with a verdict, never returns. 0 plus one short
+# evidence token when the attributed full-fidelity run shows POSITIVE progress
+# since the anchor: a running/fixing active_steps row whose last_activity is
+# newer than the anchor, or whose agent_pid names a live process. 1 for every
+# other outcome. The token is informational (it lands in a deferral reason a
+# human may read); the exit status is the contract.
+#
+# A live agent_pid counts even when last_activity is old, because a
+# legitimately silent-but-busy step (a long test run producing no output) ages
+# its activity stamp while its agent keeps working - the 2026-08-25 false
+# escalations all showed a live pid under a quiet pane. A pid is only a weak
+# clock (the agent can outlive its own progress, and pids can be recycled), so
+# callers treat this as a deferral with a bounded re-surface cadence, never as
+# a cancellation: nothing here can hide a genuinely frozen run.
+probe_run_progress_exit() {
+  local anchor_epoch now rows row fields step st la pid secs
+  local f1='' f2='' f4='' f5=''
+  [ "$HAVE_RUN" = 1 ] && [ "$RUN_SOURCE" = full ] || exit 1
+  anchor_epoch=$(anchor_mtime_epoch)
+  case "$anchor_epoch" in ''|*[!0-9]*) exit 1 ;; esac
+  now=$(date +%s)
+  rows=$(printf '%s\n' "$RUN_OUT" | awk '
+    /^[[:space:]]*active_steps\[[0-9]+\]/ { intab = 1; next }
+    intab && /^    [^ ]/ { print; next }
+    intab { exit }')
+  while IFS= read -r row; do
+    case "$row" in *,*) ;; *) continue ;; esac
+    fields=$(nm_row_fields "$row")
+    f1=''; f2=''; f4=''; f5=''
+    {
+      IFS= read -r f1 || true
+      IFS= read -r f2 || true
+      IFS= read -r _ || true
+      IFS= read -r f4 || true
+      IFS= read -r f5 || true
+    } <<< "$fields"
+    step=$(strip_quotes "$f1")
+    st=$(strip_quotes "$f2")
+    case "$st" in running|fixing) ;; *) continue ;; esac
+    la=$(strip_quotes "$f4")
+    if secs=$(nm_ago_seconds "$la"); then
+      if [ $(( now - secs )) -ge "$anchor_epoch" ]; then
+        printf 'pipeline %s active: last activity %ss ago\n' "$step" "$secs"
+        exit 0
+      fi
+    fi
+    pid=$(strip_quotes "$f5")
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    if kill -0 "$pid" 2>/dev/null; then
+      printf 'pipeline %s active: agent pid %s alive\n' "$step" "$pid"
+      exit 0
+    fi
+  done <<< "$rows"
+  exit 1
+}
+
 # --- run-step authoritative path -------------------------------------------
+
+if [ "$PROBE_MODE" = 1 ]; then
+  probe_run_progress_exit
+fi
 
 if [ "$HAVE_RUN" = 1 ]; then
   RUN_STATE=working
