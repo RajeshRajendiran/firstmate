@@ -123,12 +123,11 @@ case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;;
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional. In probe mode,
-# reaching emit means the probe's evaluation below saw no positive progress
-# evidence (unknown crew, gone worktree, terminal or unparsable run) - and the
-# probe contract for every such outcome is the silent no-evidence exit, not a
-# rendered state line. This is the backstop, not the only such exit: the arms
-# that could only ever emit in probe mode short-circuit before doing their own
-# work.
+# emit is reachable only from the pre-probe guards above it (missing meta, a
+# torn-down worktree) - the probe evaluation below has not run at those sites -
+# and converts them into the same silent no-evidence exit as the probe's own
+# arms. This is the backstop, not the only such exit: the arms that could only
+# ever emit in probe mode short-circuit before doing their own work.
 emit() {  # <state> <source> [detail]
   [ "$PROBE_MODE" = 1 ] && exit 1
   local line="state: $1${SEP}source: $2"
