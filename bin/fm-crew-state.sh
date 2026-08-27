@@ -599,7 +599,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
     [ -n "$CI_STEP_STATUS" ] || CI_STEP_STATUS=$(nm_effective_ci_step_status)
-    if [ "$RUN_STATUS" = fixing ] || [ "$CI_STEP_STATUS" = fixing ] || [ -z "$CI_STEP_STATUS" ]; then
+    if [ "$CI_STEP_STATUS" = fixing ] || [ -z "$CI_STEP_STATUS" ]; then
       CI_LOG_STATE=not-ready
     elif [ "$CI_STEP_STATUS" = running ] && [ -z "$CI_LOG_STATE" ]; then
       CI_LOG_STATE=$(nm_ci_checks_state)
