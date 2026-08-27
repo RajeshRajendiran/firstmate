@@ -1,0 +1,9 @@
+Intent items not present in the delivered code (probed behaviorally against target 8d84e92):
+
+### intent item 3: axi status says failed, runs list newest row says running (same branch+head)
+  intent says:  state: working (stale-record override)
+  actual:       state: failed · source: run-step · run failed
+
+### intent item 6: coarse running row + an earlier run's 'checks green' status-log line
+  intent says:  state: working (ci-ready shortcut suppressed for coarse running)
+  actual:       state: done · source: status-log · PR https://github.com/o/r/pull/9 checks green · run still monitoring PR

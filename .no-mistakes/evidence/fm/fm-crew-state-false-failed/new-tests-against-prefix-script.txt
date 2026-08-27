@@ -1,0 +1,31 @@
+Regression proof: the six new cases in tests/fm-crew-state.test.sh run against the
+PRE-FIX bin/fm-crew-state.sh (base 6a2cd6c), one test per invocation.
+
+### test_superseded_failed_row_is_not_attributed (exit=1)
+not ok - superseded failed row must not become the verdict (unexpected: 'state: failed')
+--- output ---
+state: failed · source: run-step · run failed
+
+### test_newest_failed_row_still_reports_failed (exit=0)
+ok - a genuine newest failed row still reports failed
+
+### test_coarse_pending_row_is_working (exit=1)
+not ok - a pending run is a validation in progress (missing: 'state: working')
+--- output ---
+state: unknown · source: run-step · runs list status: pending
+
+### test_coarse_pending_row_does_not_take_ci_ready_log (exit=1)
+not ok - an earlier run's green line must not settle a pending run (missing: 'state: working')
+--- output ---
+state: unknown · source: run-step · runs list status: pending
+
+### test_pending_run_does_not_take_ci_ready_log (exit=1)
+not ok - a pending run found via axi status is still validating (missing: 'state: working')
+--- output ---
+state: done · source: status-log · PR https://github.com/o/r/pull/11 checks green · run still monitoring PR
+
+### test_prereq_step_run_does_not_take_ci_ready_log (exit=1)
+not ok - a run that has not reached ci is still validating (missing: 'state: working')
+--- output ---
+state: done · source: status-log · PR https://github.com/o/r/pull/12 checks green · run still monitoring PR
+

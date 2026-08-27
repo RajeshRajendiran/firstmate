@@ -1,0 +1,83 @@
+Incident E2E: healthy no-mistakes validation reported as failed
+Real bin/fm-crew-state.sh CLI + fm-classify-lib crew_absorb_class + bin/fm-fleet-snapshot.sh,
+over a real throwaway git worktree with no-mistakes/tmux stubs. Same fixture both sides.
+
+================================================================
+  BEFORE THE FIX (base commit 6a2cd6c)
+================================================================
+crew:            relaunch   (branch fm/fm-crew-state-false-failed)
+worktree HEAD:   526d67b
+no-mistakes runs --limit N  (what the captain's tooling sees):
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      running    fm/fm-crew-state-false-failed 611ea0e  2026-08-25 15:08
+      failed     fm/fm-crew-state-false-failed 526d67b  2026-08-22 16:18
+                 ^ newest row = the LIVE run, head rebased by the pipeline
+                 ^ oldest row = a superseded run from 3 days ago
+pane:            busy (crew is mid-validation)
+
+$ bin/fm-crew-state.sh relaunch
+    state: failed · source: run-step · run failed
+
+$ crew_absorb_class relaunch     # watcher's absorb-or-wake-the-captain verdict
+    none
+$ bin/fm-fleet-snapshot.sh --json | jq '.tasks[] | {id, current_state}'   # captain board feed
+    {
+      "id": "relaunch",
+      "current_state": {
+        "state": "failed",
+        "source": "run-step",
+        "detail": "run failed",
+        "raw": "state: failed · source: run-step · run failed",
+        "observed_at": "2026-08-27T22:55:13Z",
+        "freshness": "fresh"
+      }
+    }
+
+--- scenario 2: run just queued (status: pending), earlier run's PR line still in the log
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      pending    fm/fm-crew-state-false-failed 526d67b  2026-08-25 22:09
+    status log last line: done: PR https://github.com/o/r/pull/9 checks green
+
+$ bin/fm-crew-state.sh relaunch
+    state: unknown · source: run-step · runs list status: pending
+
+
+================================================================
+  AFTER THE FIX (target commit 8d84e92)
+================================================================
+crew:            relaunch   (branch fm/fm-crew-state-false-failed)
+worktree HEAD:   48c9663
+no-mistakes runs --limit N  (what the captain's tooling sees):
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      running    fm/fm-crew-state-false-failed 1de3c81  2026-08-25 15:08
+      failed     fm/fm-crew-state-false-failed 48c9663  2026-08-22 16:18
+                 ^ newest row = the LIVE run, head rebased by the pipeline
+                 ^ oldest row = a superseded run from 3 days ago
+pane:            busy (crew is mid-validation)
+
+$ bin/fm-crew-state.sh relaunch
+    state: working · source: pane · harness busy (claude-hook)
+
+$ crew_absorb_class relaunch     # watcher's absorb-or-wake-the-captain verdict
+    working
+$ bin/fm-fleet-snapshot.sh --json | jq '.tasks[] | {id, current_state}'   # captain board feed
+    {
+      "id": "relaunch",
+      "current_state": {
+        "state": "working",
+        "source": "pane",
+        "detail": "harness busy (claude-hook)",
+        "raw": "state: working · source: pane · harness busy (claude-hook)",
+        "observed_at": "2026-08-27T22:55:14Z",
+        "freshness": "fresh"
+      }
+    }
+
+--- scenario 2: run just queued (status: pending), earlier run's PR line still in the log
+      running    fm/other-crew aaaaaaa  2026-08-25 22:10
+      pending    fm/fm-crew-state-false-failed 48c9663  2026-08-25 22:09
+    status log last line: done: PR https://github.com/o/r/pull/9 checks green
+
+$ bin/fm-crew-state.sh relaunch
+    state: working · source: run-step · validating (pending)
+
