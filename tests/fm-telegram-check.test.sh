@@ -218,7 +218,8 @@ SH
   # A healthy poll clears the record, so the next failure is news again.
   make_fake_curl "$FAKEBIN"
   log="$home/curl2.log"
-  FM_TELEGRAM_FAKE_RESPONSE='{"ok":true,"result":[]}'
+  FM_TELEGRAM_FAKE_RESPONSE='{"ok":true,"result":['
+  FM_TELEGRAM_FAKE_RESPONSE+=']}'
   export FM_TELEGRAM_FAKE_RESPONSE FM_TELEGRAM_CURL_LOG="$log" FM_TELEGRAM_POLL_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0
   out="$home/out3.txt"
   run_check "$home" "$out" "$CHECK"
