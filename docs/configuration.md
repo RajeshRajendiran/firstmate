@@ -675,13 +675,7 @@ FM_TELEGRAM_CAPTAIN_CHAT_ID=  # the captain's chat id
 
 `FM_TELEGRAM_API_URL_PREFIX` (default `https://api.telegram.org`), `FM_TELEGRAM_POLL_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_RATE_LIMIT` (default 1 second between chunks), and `FM_TELEGRAM_POLL_MAX_WAKES` (default 20, valid 1..200) are optional.
 
-State files, written only by `bin/fm-telegram.sh`:
-
-- `state/telegram/` - accepted-message records keyed by update_id.
-- `state/.telegram-offset` - last processed update_id.
-- `state/.telegram-woken` - durable emission journal of accepted messages whose wake was published.
-- `state/.telegram-stats` - cumulative accepted and dropped message counts.
-- `state/.telegram-offset.lock` - overlapping-poll serialization lock.
+The state files are written only by `bin/fm-telegram.sh`; the AGENTS.md `state/` layout owns their inventory.
 
 ## Relay (.env)
 

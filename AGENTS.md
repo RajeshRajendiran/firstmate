@@ -130,7 +130,7 @@ state/               runtime records and signals; gitignored
   .telegram-offset     last processed update_id; written only by bin/fm-telegram.sh
   .telegram-woken      durable emission journal of accepted messages whose wake was published; written only by bin/fm-telegram.sh
   .telegram-stats      cumulative accepted and dropped message counts; written only by bin/fm-telegram.sh
-  .telegram-offset.lock  overlapping-poll serialization lock; written only by bin/fm-telegram.sh
+  .telegram-offset.lock  overlapping-poll serialization lock; written only by bin/fm-telegram.sh (Telegram schema: docs/configuration.md "Telegram plane")
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/fm-procevent.sh, and their presence alone keeps supervision required (section 13)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line
