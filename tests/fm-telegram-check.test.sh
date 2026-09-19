@@ -19,7 +19,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 CHECK="$ROOT/bin/fm-telegram-check.sh"
-TELEGRAM="$ROOT/bin/fm-telegram.sh"
 TMP_ROOT=$(fm_test_tmproot fm-telegram-check)
 
 TG_TOKEN="test-bot-token"
