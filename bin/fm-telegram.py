@@ -19,13 +19,14 @@ def _curl_cmd(url, method="GET", json_payload=None, timeout=30, include_code=Fal
         cmd.extend(["-H", "Content-Type: application/json", "-d", json.dumps(json_payload)])
     if include_code:
         cmd.extend(["-w", "\n%{http_code}"])
-    cmd.append(url)
+    cmd.extend(["-K", "-"])
     return cmd
 
 
 def _run_curl(url, method="GET", json_payload=None, timeout=30, include_code=False):
     proc = subprocess.run(
         _curl_cmd(url, method, json_payload, timeout, include_code),
+        input=f'url = "{url}"\n',
         capture_output=True,
         text=True,
     )
@@ -50,7 +51,7 @@ def _split_telegram_text(text, max_len=4096):
     """Split text into chunks no larger than max_len, preferring line boundaries."""
     if text is None:
         text = ""
-    lines = text.splitlines()
+    lines = text.split("\n")
     chunks = []
     cur = ""
     for line in lines:

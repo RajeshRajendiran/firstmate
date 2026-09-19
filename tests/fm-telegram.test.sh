@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -X) method="$2"; shift 2 ;;
     -d) body="$2"; shift 2 ;;
+    -K) url=$(sed -n 's/^url = "\(.*\)"$/\1/p'); shift 2 ;;
     -H|-sS|-m|--max-time|-w) shift 2 ;;
     *) url="$1"; shift ;;
   esac
@@ -211,7 +212,7 @@ test_send_splits_at_line_boundary() {
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk1")
   assert_equals "2500" "$len" "first chunk length is one line"
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk2")
-  assert_equals "2500" "$len" "second chunk length is the other line"
+  assert_equals "2501" "$len" "second chunk keeps its trailing newline"
   pass "fm-telegram: send splits long text at line boundaries"
 }
 
