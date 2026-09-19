@@ -10,9 +10,10 @@
 # The Telegram listener (`fm-telegram.sh listen`) is a long-polling loop that
 # already appends `check: telegram <update_id>` wakes itself and advances the
 # durable offset. The runner's only job is to keep that listener alive; any
-# captured result is therefore a routine no-op from the runner's perspective.
-# Crashes are recovered by the runner's restart and stranded-source reporting,
-# and the real inbound wakes come directly from the listener.
+# captured result is therefore a routine no-op from the runner's perspective,
+# except the listener's final failure line, which is announced so a dead
+# channel is never swallowed. The real inbound wakes come directly from the
+# listener.
 #
 # This adapter owns only Telegram-specific lifecycle decisions. Ownership,
 # durable capture, publication, and restart recovery belong to bin/fm-procevent.sh.
@@ -27,9 +28,13 @@ fm-procevent-telegram.sh classify <result-file>
 EOF
 }
 
-# Every captured result is silent: the listener already queued the real wakes.
+# A result is silent unless it carries the listener's final failure line, so a
+# dead listener is announced while routine output stays quiet.
 cmd_silent() {
-  return 0
+  local file=${1-}
+  [ -n "$file" ] || { usage >&2; exit 2; }
+  [ -f "$file" ] || return 0
+  ! grep -q 'listen exiting after' "$file"
 }
 
 # The listener never terminates voluntarily; the runner keeps it restarted.

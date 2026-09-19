@@ -432,6 +432,7 @@ telegram_listen() {
   while :; do
     if telegram_poll "$quiet"; then
       failures=0
+      delay=5
       continue
     fi
     failures=$((failures + 1))
