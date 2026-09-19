@@ -126,6 +126,11 @@ state/               runtime records and signals; gitignored
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
+  telegram/            accepted-message records keyed by update_id; written only by bin/fm-telegram.sh
+  .telegram-offset     last processed update_id; written only by bin/fm-telegram.sh
+  .telegram-woken      durable emission journal of accepted messages whose wake was published; written only by bin/fm-telegram.sh
+  .telegram-stats      cumulative accepted and dropped message counts; written only by bin/fm-telegram.sh
+  .telegram-offset.lock  overlapping-poll serialization lock; written only by bin/fm-telegram.sh (Telegram schema: docs/configuration.md "Telegram plane")
   pending-replies/   parent-owned secondmate pending-reply records (correlation id, delivery vs reply, recovery, escalation); fm-pending-reply-lib.sh
   procevent/         registered process-to-event sources, one private record per canonical source id; written only by bin/fm-procevent.sh, and their presence alone keeps supervision required (section 13)
   procevent-inbox/   private captured results and their durable handled-acknowledgement markers; source output lives here and never in an event line

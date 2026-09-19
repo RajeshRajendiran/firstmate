@@ -655,6 +655,29 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 `FM_MAIL_CHECK_BUDGET` (default 15, valid 5..25) bounds one standing poll and is cut down to fit `FM_CHECK_TIMEOUT`.
 `bin/fm-mail-check.sh disarm` removes the standing check.
 
+## Telegram plane (.env)
+
+The Telegram plane (`bin/fm-telegram.sh`) receives private messages from the captain's Telegram chat and sends replies to the same chat.
+Its `poll` command long-polls the Bot API `getUpdates` endpoint with a stored offset, keeps only messages whose `chat.id` equals `FM_TELEGRAM_CAPTAIN_CHAT_ID`, drops every other message silently, stashes each accepted message under `state/telegram/<update_id>.json`, and appends exactly one `check: telegram <update_id>` wake per accepted message.
+It advances the durable offset only after the record and wake are durable, and bounds wakes per run with `FM_TELEGRAM_POLL_MAX_WAKES`.
+`send` splits replies at 4,096 characters on line boundaries, respects the one-message-per-second limit, reports `delivered`, `ambiguous`, or `not-delivered` for each chunk, and stops at the first chunk that is not delivered and exits nonzero.
+`status` prints configuration presence and the last offset with no network call.
+
+The channel carries Relay-grade authority: reversible work only, with merges, destructive, and security-sensitive asks still confirmed in the terminal.
+
+This section is the single owner of the Telegram-plane configuration schema; for direct invocations, environment values override `.env`, matching the mail and Relay contract.
+
+Required, in the home's gitignored `.env`:
+
+```sh
+FM_TELEGRAM_BOT_TOKEN=        # token from BotFather
+FM_TELEGRAM_CAPTAIN_CHAT_ID=  # the captain's chat id
+```
+
+`FM_TELEGRAM_API_URL_PREFIX` (default `https://api.telegram.org`), `FM_TELEGRAM_POLL_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_RATE_LIMIT` (default 1 second between chunks), and `FM_TELEGRAM_POLL_MAX_WAKES` (default 20, valid 1..200) are optional.
+
+The state files are written only by `bin/fm-telegram.sh`; the AGENTS.md `state/` layout owns their inventory.
+
 ## Relay (.env)
 
 Relay lets a firstmate instance answer public mentions and act on normal reversible mention requests through firstmate's normal lifecycle.
