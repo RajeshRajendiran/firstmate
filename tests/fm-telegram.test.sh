@@ -243,7 +243,7 @@ test_send_reports_not_delivered() {
     FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
     "$TELEGRAM" send "hello" 2>&1)
   rc=$?
-  expect_code 0 "$rc" "send must exit 0 when the API reports not-delivered"
+  expect_code 1 "$rc" "send must exit nonzero when the API reports not-delivered"
   assert_contains "$out" "not-delivered: 1/1" "send reports not-delivered"
   assert_contains "$out" "telegram error" "not-delivered reason names the telegram error"
   pass "fm-telegram: send reports not-delivered"
@@ -266,7 +266,7 @@ SH
     FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
     "$TELEGRAM" send "hello" 2>&1)
   rc=$?
-  expect_code 0 "$rc" "send must exit 0 when curl times out"
+  expect_code 1 "$rc" "send must exit nonzero when curl times out"
   assert_contains "$out" "ambiguous: 1/1" "send reports ambiguous on curl failure"
   pass "fm-telegram: send reports ambiguous on timeout"
 }

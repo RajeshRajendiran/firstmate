@@ -347,13 +347,13 @@ telegram_poll() {
         json_line="${line#A }"
         update_id="$(printf '%s\n' "$json_line" | "$PY" -c 'import sys, json; print(json.loads(sys.stdin.read())["update_id"])')"
         summary="$(printf '%s\n' "$json_line" | "$PY" -c 'import sys, json; print(json.loads(sys.stdin.read())["summary"])')"
-        [ "$update_id" -gt "$new_offset" ] && new_offset=$update_id
-        accepted=$((accepted + 1))
         if telegram_is_woken "$update_id"; then
+          [ "$update_id" -gt "$new_offset" ] && new_offset=$update_id
+          accepted=$((accepted + 1))
           continue
         fi
         if [ "$woke" -ge "$POLL_MAX_WAKES" ]; then
-          continue
+          break
         fi
         record_tmp="$(mktemp "$STATE_DIR/telegram/$update_id.json.tmp.XXXXXX")" || {
           printf 'fm-telegram: cannot create record temp for %s\n' "$update_id" >&2
@@ -367,6 +367,8 @@ telegram_poll() {
         if telegram_wake_for "$update_id" "$summary"; then
           if mv -f -- "$record_tmp" "$STATE_DIR/telegram/$update_id.json"; then
             woke=$((woke + 1))
+            accepted=$((accepted + 1))
+            [ "$update_id" -gt "$new_offset" ] && new_offset=$update_id
             printf 'fm-telegram: woke for %s\n' "$update_id"
           else
             rm -f -- "$record_tmp"
@@ -430,8 +432,10 @@ telegram_send() {
   else
     printf '%s' "$text_arg" > "$text_file"
   fi
-  telegram_run_send "$text_file"
+  local rc=0
+  telegram_run_send "$text_file" || rc=$?
   rm -f -- "$text_file"
+  return "$rc"
 }
 
 telegram_status() {

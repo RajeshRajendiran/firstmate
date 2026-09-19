@@ -185,6 +185,8 @@ def cmd_send():
             print(f"{status['verdict']}: {i}/{total}: {status['reason']}")
         else:
             print(f"{status['verdict']}: {i}/{total}")
+        if status["verdict"] != "delivered":
+            return 1
     return 0
 
 
