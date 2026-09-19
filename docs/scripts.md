@@ -155,8 +155,10 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-mail.sh`             | General-purpose mail plane: read unseen IMAP mail, send one SMTP message, or surface new mail as a `check` wake via `poll` (configuration in the home's gitignored `.env`) |
 | `fm-mail.py`             | The IMAP/SMTP engine behind `fm-mail.sh` |
 | `fm-mail-check.sh`       | Standing received-mail poll: `arm` registers a watcher check that runs `fm-mail.sh poll` on the watcher cadence (new mail still wakes via the poll; the check's own line also wakes unless the poll is a proven no-op), `disarm` removes it |
-| `fm-telegram.sh`         | Telegram plane: `poll` long-polls the captain's private chat and surfaces each accepted message as a `check` wake, `send` replies in 4,096-character chunks, `status` reports configuration and offset (schema: docs/configuration.md "Telegram plane") |
+| `fm-telegram.sh`         | Telegram plane: `poll` long-polls the captain's private chat and surfaces each accepted message as a `check` wake, `listen` loops `poll` for near-instant delivery, `send` replies in 4,096-character chunks, `status` reports configuration and offset (schema: docs/configuration.md "Telegram plane") |
 | `fm-telegram.py`         | The Bot API engine behind `fm-telegram.sh` |
+| `fm-telegram-check.sh`   | Unattended Telegram delivery: `arm`/`disarm` a standing watcher check that runs `poll`, or `listen-arm`/`listen-disarm` the near-instant `listen` process-event source; only one may be armed per home (docs/configuration.md "Telegram plane") |
+| `fm-procevent-telegram.sh` | Process-event adapter for the `listen` source: silent on a clean result, wakes when the listener dies |
 | `fm-voice-relay.py`      | Hold the spoken conversation on this host, answer from the records, and hand real work to `fm-inbox.sh` ([voice-relay.md](voice-relay.md)) |
 | `fm-voice-client.py`     | The laptop end of the spoken interface: capture, playback, and turn timing over SSH; audio devices unverified |
 | `fm_voice_frame.py`      | The wire format both machines share, copied to the laptop beside the client          |
