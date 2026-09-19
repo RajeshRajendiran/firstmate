@@ -364,19 +364,17 @@ telegram_poll() {
           rm -f -- "$record_tmp"
           break
         fi
-        if telegram_wake_for "$update_id" "$summary"; then
-          if mv -f -- "$record_tmp" "$STATE_DIR/telegram/$update_id.json"; then
-            woke=$((woke + 1))
-            accepted=$((accepted + 1))
-            [ "$update_id" -gt "$new_offset" ] && new_offset=$update_id
-            printf 'fm-telegram: woke for %s\n' "$update_id"
-          else
-            rm -f -- "$record_tmp"
-            printf 'fm-telegram: could not commit record for %s\n' "$update_id" >&2
-            break
-          fi
-        else
+        if ! mv -f -- "$record_tmp" "$STATE_DIR/telegram/$update_id.json"; then
           rm -f -- "$record_tmp"
+          printf 'fm-telegram: could not commit record for %s\n' "$update_id" >&2
+          break
+        fi
+        if telegram_wake_for "$update_id" "$summary"; then
+          woke=$((woke + 1))
+          accepted=$((accepted + 1))
+          [ "$update_id" -gt "$new_offset" ] && new_offset=$update_id
+          printf 'fm-telegram: woke for %s\n' "$update_id"
+        else
           printf 'fm-telegram: wake failed for %s\n' "$update_id" >&2
           break
         fi
