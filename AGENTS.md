@@ -128,6 +128,7 @@ state/               runtime records and signals; gitignored
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
   telegram/            accepted-message records keyed by update_id; written only by bin/fm-telegram.sh
   telegram/handled/    acknowledged message records moved here by the telegram-captain-channel skill
+  telegram.check.sh    generated Telegram poll shim and its .check-trust binding; present only after bin/fm-telegram-check.sh arm; report record .telegram-check (Telegram schema: docs/configuration.md "Telegram plane")
   .telegram-offset     last processed update_id; written only by bin/fm-telegram.sh
   .telegram-woken      durable emission journal of accepted messages whose wake was published; written only by bin/fm-telegram.sh
   .telegram-stats      cumulative accepted and dropped message counts; written only by bin/fm-telegram.sh
