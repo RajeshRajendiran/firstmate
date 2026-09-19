@@ -663,6 +663,14 @@ It advances the durable offset only after the record and wake are durable, and b
 `send` splits replies at 4,096 characters on line boundaries, respects the one-message-per-second limit, reports `delivered`, `ambiguous`, or `not-delivered` for each chunk, and stops at the first chunk that is not delivered and exits nonzero.
 `status` prints configuration presence and the last offset with no network call.
 
+`bin/fm-telegram-check.sh` provides the unattended delivery paths.
+`arm` writes `state/telegram.check.sh` and registers it with the watcher's slow-check cadence (`FM_CHECK_INTERVAL`), so `poll` runs on its own and new messages still surface as `check: telegram <update_id>` wakes.
+`disarm` removes the standing check.
+`listen-arm` registers `fm-telegram.sh listen` as a process-event source for near-instant delivery; the loop long-polls Telegram directly and wakes firstmate within seconds.
+`listen-disarm` retires the process-event source.
+Only one of the standing check or the listen source may be armed for the same home at a time, because Telegram delivers updates to one long-polling consumer per bot token.
+`FM_TELEGRAM_CHECK_BUDGET` (default 15, valid 5..25) bounds one standing poll and is cut down to fit `FM_CHECK_TIMEOUT`.
+
 The channel carries Relay-grade authority: reversible work only, with merges, destructive, and security-sensitive asks still confirmed in the terminal.
 
 This section is the single owner of the Telegram-plane configuration schema; for direct invocations, environment values override `.env`, matching the mail and Relay contract.
@@ -677,6 +685,7 @@ FM_TELEGRAM_CAPTAIN_CHAT_ID=  # the captain's chat id
 `FM_TELEGRAM_API_URL_PREFIX` (default `https://api.telegram.org`), `FM_TELEGRAM_POLL_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_RATE_LIMIT` (default 1 second between chunks), and `FM_TELEGRAM_POLL_MAX_WAKES` (default 20, valid 1..200) are optional.
 
 The state files are written only by `bin/fm-telegram.sh`; the AGENTS.md `state/` layout owns their inventory.
+A handled Telegram message is acknowledged by moving its record from `state/telegram/<update_id>.json` to `state/telegram/handled/<update_id>.json`.
 
 ## Relay (.env)
 

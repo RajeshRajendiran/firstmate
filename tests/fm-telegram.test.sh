@@ -280,6 +280,7 @@ test_help_plumbing() {
   rc=$?
   expect_code 0 "$rc" "--help must exit 0"
   assert_contains "$out" "poll" "--help lists the poll subcommand"
+  assert_contains "$out" "listen" "--help lists the listen subcommand"
   assert_contains "$out" "send" "--help lists the send subcommand"
   assert_contains "$out" "status" "--help lists the status subcommand"
   pass "fm-telegram: --help prints usage for every subcommand"
@@ -295,6 +296,31 @@ test_unknown_subcommand_prints_usage() {
   assert_contains "$out" "poll" "unknown subcommand prints usage"
   assert_contains "$out" "status" "unknown subcommand prints usage"
   pass "fm-telegram: unknown subcommand prints usage and exits non-zero"
+}
+
+test_stashed_record_carries_acknowledgement_fields() {
+  local fakebin out home log
+  home=$(make_tg_home "$TMP_ROOT/record-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT")
+  make_fake_curl "$fakebin"
+  log="$TMP_ROOT/record.log"
+  FM_TELEGRAM_FAKE_RESPONSE='{"ok":true,"result":['
+  FM_TELEGRAM_FAKE_RESPONSE+='{"update_id":20,"message":{"chat":{"id":12345},"message_id":60,"date":1020,"from":{"id":12345,"username":"captain"},"text":"acknowledge me"}}'
+  FM_TELEGRAM_FAKE_RESPONSE+=']}'
+  export FM_TELEGRAM_FAKE_RESPONSE FM_TELEGRAM_CURL_LOG="$log"
+
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_POLL_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" poll 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "poll must succeed"
+  assert_contains "$out" "woke for 20" "poll wakes for the record update"
+  assert_present "$home/state/telegram/20.json" "accepted message is stashed by update_id"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"update_id":20' "record keeps update_id for acknowledgement routing"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"message_id":60' "record keeps message_id for potential reply threading"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"text":"acknowledge me"' "record keeps the captain text for the handler"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"from":"captain"' "record keeps the sender identity"
+  pass "fm-telegram: stashed record carries the fields the acknowledgement contract needs"
 }
 
 test_no_secret_leaked_to_status() {
@@ -319,3 +345,4 @@ test_send_reports_ambiguous
 test_help_plumbing
 test_unknown_subcommand_prints_usage
 test_no_secret_leaked_to_status
+test_stashed_record_carries_acknowledgement_fields
