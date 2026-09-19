@@ -63,6 +63,57 @@ SH
   chmod +x "$fakebin/curl"
 }
 
+make_counting_curl() {
+  local fakebin=$1
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+n=$(cat "$FM_TELEGRAM_COUNT_FILE" 2>/dev/null || echo 0)
+n=$((n + 1))
+printf '%s' "$n" > "$FM_TELEGRAM_COUNT_FILE"
+for f in $FM_TELEGRAM_FAIL_CALLS; do
+  if [ "$f" = "$n" ]; then
+    printf '{"ok":false,"description":"boom"}'
+    exit 0
+  fi
+done
+if [ "$n" -gt "$FM_TELEGRAM_MAX_CALLS" ]; then
+  printf '{"ok":false,"description":"boom"}'
+  exit 0
+fi
+printf '{"ok":true,"result":[]}'
+SH
+  chmod +x "$fakebin/curl"
+  cat > "$fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_TELEGRAM_SLEEP_LOG"
+SH
+  chmod +x "$fakebin/sleep"
+}
+
+test_listen_quiet_success_backoff_and_exit() {
+  local fakebin home out rc
+  home=$(make_tg_home "$TMP_ROOT/listen-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT/listen-bin")
+  make_counting_curl "$fakebin"
+  : > "$TMP_ROOT/listen-sleep.log"
+  rm -f "$TMP_ROOT/listen-count"
+  # Calls 1-2 succeed, 3 fails, 4 succeeds (resets the streak), 5+ all fail.
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_POLL_TIMEOUT=1 \
+    FM_TELEGRAM_COUNT_FILE="$TMP_ROOT/listen-count" FM_TELEGRAM_SLEEP_LOG="$TMP_ROOT/listen-sleep.log" \
+    FM_TELEGRAM_FAIL_CALLS="3" FM_TELEGRAM_MAX_CALLS=4 \
+    "$TELEGRAM" listen 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "listen must exit non-zero after max consecutive failures"
+  assert_not_contains "$out" "no new messages" "listen polls quietly on success"
+  assert_contains "$out" "poll failed (1/5)" "first failure is reported"
+  assert_contains "$out" "poll failed (4/5)" "failure streak reaches 4"
+  assert_contains "$out" "listen exiting after 5 consecutive poll failures" "listen reports its final failure"
+  assert_equals "2" "$(grep -c 'poll failed (1/5)' <<<"$out")" "success resets the failure streak"
+  assert_equals "5 5 10 20 30" "$(tr '\n' ' ' < "$TMP_ROOT/listen-sleep.log" | sed 's/ $//')" "backoff doubles and caps at 30s"
+  pass "fm-telegram: listen stays quiet on success, backs off on failure, exits after max failures"
+}
+
 test_missing_secret_fails_cleanly() {
   local out rc home
   home=$(make_tg_home "$TMP_ROOT/missing-home")
@@ -280,6 +331,7 @@ test_help_plumbing() {
   rc=$?
   expect_code 0 "$rc" "--help must exit 0"
   assert_contains "$out" "poll" "--help lists the poll subcommand"
+  assert_contains "$out" "listen" "--help lists the listen subcommand"
   assert_contains "$out" "send" "--help lists the send subcommand"
   assert_contains "$out" "status" "--help lists the status subcommand"
   pass "fm-telegram: --help prints usage for every subcommand"
@@ -297,6 +349,31 @@ test_unknown_subcommand_prints_usage() {
   pass "fm-telegram: unknown subcommand prints usage and exits non-zero"
 }
 
+test_stashed_record_carries_acknowledgement_fields() {
+  local fakebin out home log
+  home=$(make_tg_home "$TMP_ROOT/record-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT")
+  make_fake_curl "$fakebin"
+  log="$TMP_ROOT/record.log"
+  FM_TELEGRAM_FAKE_RESPONSE='{"ok":true,"result":['
+  FM_TELEGRAM_FAKE_RESPONSE+='{"update_id":20,"message":{"chat":{"id":12345},"message_id":60,"date":1020,"from":{"id":12345,"username":"captain"},"text":"acknowledge me"}}'
+  FM_TELEGRAM_FAKE_RESPONSE+=']}'
+  export FM_TELEGRAM_FAKE_RESPONSE FM_TELEGRAM_CURL_LOG="$log"
+
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_POLL_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" poll 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "poll must succeed"
+  assert_contains "$out" "woke for 20" "poll wakes for the record update"
+  assert_present "$home/state/telegram/20.json" "accepted message is stashed by update_id"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"update_id":20' "record keeps update_id for acknowledgement routing"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"message_id":60' "record keeps message_id for potential reply threading"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"text":"acknowledge me"' "record keeps the captain text for the handler"
+  assert_contains "$(cat "$home/state/telegram/20.json" 2>/dev/null)" '"from":"captain"' "record keeps the sender identity"
+  pass "fm-telegram: stashed record carries the fields the acknowledgement contract needs"
+}
+
 test_no_secret_leaked_to_status() {
   local out home
   home=$(make_tg_home "$TMP_ROOT/secret-home")
@@ -307,6 +384,7 @@ test_no_secret_leaked_to_status() {
 }
 
 test_missing_secret_fails_cleanly
+test_listen_quiet_success_backoff_and_exit
 test_env_overrides_env_file
 test_status_without_network
 test_poll_chat_filter_and_wake
@@ -319,3 +397,4 @@ test_send_reports_ambiguous
 test_help_plumbing
 test_unknown_subcommand_prints_usage
 test_no_secret_leaked_to_status
+test_stashed_record_carries_acknowledgement_fields

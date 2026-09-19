@@ -15,6 +15,9 @@
 #                        wake per accepted message. Advances the durable
 #                        offset only after the record and wake are durable.
 #                        Bounds wakes per run like the mail plane.
+#   listen               Run poll in a tight loop for near-instant delivery.
+#                        The loop is meant to be supervised as a process-event
+#                        source; do not run two consumers for the same bot.
 #   send <text | ->      Send one or more messages to the captain chat id,
 #                        splitting at 4,096 characters on line boundaries and
 #                        respecting the one-message-per-second limit. Reports
@@ -140,6 +143,7 @@ export FM_TELEGRAM_SEND_RATE_LIMIT="$SEND_RATE_LIMIT"
 usage() {
   cat <<'EOF'
 fm-telegram.sh poll
+fm-telegram.sh listen
 fm-telegram.sh send <text | ->
 fm-telegram.sh status
 EOF
@@ -300,6 +304,7 @@ telegram_run_send() {
 }
 
 telegram_poll() {
+  local quiet=${1:-0}
   local offset new_offset accepted=0 dropped=0 woke=0
   local poll_out poll_err line kind json_line update_id summary
   local record_tmp stats_accepted stats_dropped
@@ -411,10 +416,35 @@ telegram_poll() {
     }
   fi
   fm_lock_release "$LOCK_FILE"
-  if [ "$woke" -eq 0 ]; then
+  if [ "$woke" -eq 0 ] && [ "$quiet" -eq 0 ]; then
     printf 'fm-telegram: no new messages\n'
   fi
   return 0
+}
+
+# Long-polling listener: repeatedly run poll. Each poll itself long-polls the
+# Telegram server, so this loop delivers within seconds when the server has a
+# message. It is intended to run under the process-event runner, which
+# restarts it if it exits. Failures back off so a transient API error does
+# not spam the runner with restarts.
+telegram_listen() {
+  local quiet=1 failures=0 max_failures=5 delay=5 max_delay=30
+  while :; do
+    if telegram_poll "$quiet"; then
+      failures=0
+      delay=5
+      continue
+    fi
+    failures=$((failures + 1))
+    if [ "$failures" -ge "$max_failures" ]; then
+      printf 'fm-telegram: listen exiting after %d consecutive poll failures\n' "$failures" >&2
+      return 1
+    fi
+    printf 'fm-telegram: poll failed (%d/%d), retrying in %ds\n' "$failures" "$max_failures" "$delay" >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+    [ "$delay" -gt "$max_delay" ] && delay=$max_delay
+  done
 }
 
 telegram_send() {
@@ -457,6 +487,9 @@ telegram_status() {
 case "${1:-}" in
   poll)
     telegram_poll
+    ;;
+  listen)
+    telegram_listen
     ;;
   send)
     telegram_send "$@"

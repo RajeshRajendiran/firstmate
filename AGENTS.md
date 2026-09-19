@@ -127,6 +127,8 @@ state/               runtime records and signals; gitignored
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
   telegram/            accepted-message records keyed by update_id; written only by bin/fm-telegram.sh
+  telegram/handled/    acknowledged message records moved here by the telegram-captain-channel skill
+  telegram.check.sh    generated Telegram poll shim and its .check-trust binding; present only after bin/fm-telegram-check.sh arm; report record .telegram-check (Telegram schema: docs/configuration.md "Telegram plane")
   .telegram-offset     last processed update_id; written only by bin/fm-telegram.sh
   .telegram-woken      durable emission journal of accepted messages whose wake was published; written only by bin/fm-telegram.sh
   .telegram-stats      cumulative accepted and dropped message counts; written only by bin/fm-telegram.sh
@@ -441,6 +443,7 @@ Handle actionable wakes as follows:
 1. For `signal:`, read the listed event lines first, then reconcile current state only where action depends on it.
 2. For `stale:`, inspect the recorded endpoint and load `stuck-crewmate-recovery` for a stopped, looping, confused, or unresponsive worker; a deep-inspection reason also requires current-state and validation-log inspection.
 3. For `check:`, act on the named poll result, including merges, contribution signals, Relay events, process-to-event source results, and captain inbox notes; a handled inbox note is also acknowledged with `bin/fm-inbox.sh drain --ack <id>`, or it stays counted as still waiting for firstmate.
+   A `check: telegram <update_id>` wake is the captain speaking from the Telegram plane: load `/telegram-captain-channel`, read the stashed message at `state/telegram/<update_id>.json`, answer with `bin/fm-telegram.sh send`, and acknowledge by moving the record to `state/telegram/handled/<update_id>.json`.
 4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, update the backlog, and never report an unchanged fleet as progress.
 
 Load `bearings` on a contributions check wake or when filing work linked to an upstream issue; its contribution-follow-up section owns triage and exact signal acknowledgement.
@@ -578,6 +581,7 @@ The skill owns the guarded fleet update and restart procedure; it never touches 
 
 These skills are not captain-invocable; load them only at their precise triggers.
 
+- `telegram-captain-channel` - load on a `check: telegram <update_id>` wake to read the stashed captain message, answer through the Telegram plane, and acknowledge the record by moving it to `state/telegram/handled/<update_id>.json`.
 - `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap or network-checks section prints an actionable diagnostic line (`MISSING:`, `MISSING_MANUAL:`, `PRESENTATION_UNAVAILABLE:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `STARTUP_MEMORY_BUDGET:`, `CREW_DISPATCH: invalid`, `FLEET_SYNC:`, `NETWORK_CHECKS:`, `HOME_SUMMARY:`, `BACKLOG_RECONCILE:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `SECONDMATE_HANDOFF:`, `NUDGE_SECONDMATES:`, or `FMX:`), or when `BOOTSTRAP_INFO:` says an interrupted backlog cleanup may have left an endpoint or local copy; silence and other `BOOTSTRAP_INFO:` facts need no load.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding.
