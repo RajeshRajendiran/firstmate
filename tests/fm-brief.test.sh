@@ -894,7 +894,7 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 # text-report instruction instead, so a scout never drives a below-floor Lavish.
 test_scout_lavish_line_follows_presentation_floor() {
   local base label version expect case_dir fakebin brief n=0
-  local hosting='you may host the Lavish review loop yourself'
+  local hosting='use the lavish-axi rule'
   local text_only='deliver your findings as a text report without Lavish'
   base=$(fm_test_base_path_sans "${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" lavish-axi)
   while IFS='^' read -r label version expect; do
