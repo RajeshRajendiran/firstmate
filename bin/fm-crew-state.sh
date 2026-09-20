@@ -37,25 +37,62 @@
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
 #      branch whose head was rewritten or diverged must not be attributed.
-#      A run matches when its head equals the worktree HEAD, or the worktree HEAD
-#      is an ancestor of the run head (pipeline fix commits advanced the run on
-#      the same line of history). Local work that advanced past the run head, or
-#      diverged from it, invalidates attribution. While the pipeline owns the
-#      branch (branch_sync.state=pipeline_owned), its own custody attribution
-#      binds an ACTIVE run without head equality (fm_nm_run_is_pipeline_owned_active
-#      in bin/fm-nm-run-lib.sh).
-#      A run head whose commit object the task copy never fetched (the pipeline
-#      committed its fix round in its own checkout) cannot be verified locally;
-#      that row is recognized only as a provable pipeline-owned continuation -
-#      the branch's ACTIVE newest ledger row, anchored by the row immediately
-#      before it having ended at exactly this worktree's head - so an active fix
-#      round never reads as an older failed run (rule owned by
-#      fm_nm_runs_status_for_worktree in bin/fm-nm-run-lib.sh).
+#      A run EXECUTING on this crew's branch (pending, running, fixing or ci -
+#      the detail-object vocabulary, which carries all four; the selected route
+#      re-reads it by id and the legacy route passes the same detail SHAPE, and
+#      neither is the overview table's narrower status column)
+#      is authoritative REGARDLESS of head (fm_nm_run_is_executing in
+#      bin/fm-nm-run-lib.sh) as long as an explicit probe has not ANSWERED that
+#      the daemon is down (nm_daemon_answered_down): the pipeline rebases the
+#      branch and
+#      commits its fix rounds in its own checkout, so a live run's head
+#      routinely differs from the local head, and reading an older run that
+#      still matches the local head would report a working crew as failed - but
+#      a record still saying `running` because the daemon died under it is
+#      evidence from a dead instrument, exactly as for a terminal record, and
+#      must not answer once the worktree has moved off the run head. Every
+#      other run -
+#      terminal, or parked at a gate - matches only when its head equals the
+#      worktree HEAD, or the worktree HEAD is an ancestor of the run head
+#      (pipeline fix commits advanced the run on the same line of history);
+#      local work that advanced past the run head, or diverged from it,
+#      invalidates attribution. While the pipeline owns the branch
+#      (branch_sync.state=pipeline_owned), its own custody attribution also
+#      binds ANY ACTIVE run - executing or parked - without head equality
+#      (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh), and that
+#      route is deliberately OUTSIDE the daemon rule below: while the pipeline
+#      holds custody its own attribution is the attribution, and second-guessing
+#      it here is a change to a route this fix does not otherwise touch.
+#      A parked run head whose commit object the task copy never fetched cannot
+#      be verified locally; that row is recognized only as a provable
+#      pipeline-owned continuation - the branch's ACTIVE newest ledger row,
+#      anchored by the row immediately before it having ended at exactly this
+#      worktree's head (rule owned by fm_nm_runs_status_for_worktree in
+#      bin/fm-nm-run-lib.sh). The coarse runs-ledger fallback has NO
+#      branch-name-only acceptance: an executing `axi status` record is the one
+#      live bind, so a ledger row that cannot be tied to this worktree's head
+#      never answers on branch name alone. A record whose daemon has ANSWERED
+#      down reads unknown and names the dead instrument on exactly ONE route:
+#      the id-addressed selected run whose head this copy cannot resolve and
+#      whose continuation the ledger anchor proves. The coarse ledger fallback
+#      carries NO such verdict - it reports the same status word for a
+#      head-matching row and an anchored one, so any rule there would also catch
+#      head-tied rows, and a record whose head still equals or precedes the
+#      worktree HEAD keeps its original working reading, as it always has.
+#      A record whose
+#      identity is proven by NEITHER head nor ledger anchor is not this
+#      worktree's run to report on: it leaves HAVE_RUN=0 so the pane and status
+#      log answer, because a stale record naming this branch must never override
+#      a crew that is visibly working.
+#      A run PARKED at a gate is exempt from the dead-instrument verdict: an
+#      open decision stays open when the instrument dies, so it keeps its gate
+#      and findings.
 #      fm_nm_select_run in bin/fm-nm-run-lib.sh owns complete run selection
 #      and ambiguity reporting. The selected run's id-addressed status must
 #      agree on id, branch, and live/terminal class before attribution;
 #      disagreement reports unknown with available candidate ids.
-#      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
+#      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working
+#      (the id-addressed detail read carries step words the overview does not),
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
@@ -81,7 +118,11 @@
 #      agree, and are reported as parked. A `blocked:` line that reports a
 #      refused or missing daemon socket remains blocked even if an attributed
 #      run record is stale or terminal, for as long as that blocker is still the
-#      log's latest event. Other daemon, timeout, or unreachability
+#      log's latest event. The same holds for any open decision when the run
+#      record itself is UNVERIFIED (its daemon answered down): the crew saw its
+#      gate or blocker first hand, so needs-decision stays parked and blocked
+#      stays blocked, with the unverified record named as the reason.
+#      Other daemon, timeout, or unreachability
 #      claims are superseded BECAUSE THE RUN IS ALIVE when the run is
 #      running/fixing with recent reported activity: a killed or timed-out drive
 #      call is not daemon death, so that claim is answered by steering the crew
@@ -399,7 +440,7 @@ nm_findings_count() {
 }
 nm_gate_step_row() {
   local row step rest status findings
-  row=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*[^,]+,[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*,' | head -1)
+  row=$(printf '%s\n' "$RUN_OUT" | grep -E "$FM_NM_GATE_ROW_RE" | head -1)
   [ -n "$row" ] || return 0
   row=$(trim "$row")
   step=$(trim "${row%%,*}")
@@ -411,7 +452,7 @@ nm_gate_step_row() {
 }
 nm_gate_status() {
   local s row
-  s=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*(status|state):[[:space:]]*"?(awaiting_approval|fix_review)"?[[:space:]]*$' | head -1)
+  s=$(printf '%s\n' "$RUN_OUT" | grep -E "$FM_NM_GATE_SCALAR_RE" | head -1)
   if [ -n "$s" ]; then
     s=$(strip_quotes "$(trim "${s#*:}")")
     printf '%s' "$s"
@@ -421,7 +462,7 @@ nm_gate_status() {
   [ -n "$row" ] && { row=${row#*|}; printf '%s' "${row%%|*}"; }
 }
 nm_has_gate() {
-  printf '%s\n' "$RUN_OUT" | grep -Eq '^[[:space:]]*gate:[[:space:]]*'
+  printf '%s\n' "$RUN_OUT" | grep -Eq "$FM_NM_GATE_LINE_RE"
 }
 nm_gate_line_name() {
   local gate step
@@ -587,8 +628,40 @@ nm_reclassify_failed_run_as_held_green() {
 # refused socket, timeout, non-zero answer - means the daemon is not provably
 # up, which is the only fact the coarse fallback needs.
 nm_daemon_probe_down() {
-  fm_nm_run_checked "$WT" "$NM_TIMEOUT" daemon status >/dev/null || return 0
-  return 1
+  nm_daemon_probe
+  [ "$NM_DAEMON_ANSWER" != up ]
+}
+
+# 0 only when the probe ANSWERED and that answer was "down". Suppressing a LIVE
+# record needs this stricter question: `not provably up` above is fail-closed,
+# which is safe when it degrades a terminal record to unknown, but on a live
+# record it would drop a working crew back to a possibly-stale status log every
+# time the probe merely ran slow - the crew would flap between working and
+# failed on probe latency alone. 124 is the bounded call's own did-not-answer
+# code (both the timeout and perl arms of fm_nm_run_bounded use it), and proves
+# nothing about the daemon. The no-timeout-tool return of 1 cannot reach here:
+# without a timeout tool the `axi status` read above is empty too, so this whole
+# block is skipped.
+nm_daemon_answered_down() {
+  nm_daemon_probe
+  [ "$NM_DAEMON_ANSWER" = down ]
+}
+
+# ONE bounded `daemon status` call per crew read, cached with the three answers
+# its two readers need to stay distinguishable: `up`, `unanswered` (the bounded
+# call's own 124), and `down`. Collapsing `up` and `unanswered` into a single
+# not-down bucket is what would force a second subprocess, and on a wedged
+# daemon each probe burns the full timeout inside the supervisor's per-crew
+# polling loop.
+nm_daemon_probe() {
+  local rc=0
+  [ -n "$NM_DAEMON_ANSWER" ] && return 0
+  fm_nm_run_checked "$WT" "$NM_TIMEOUT" daemon status >/dev/null || rc=$?
+  case "$rc" in
+    0)   NM_DAEMON_ANSWER=up ;;
+    124) NM_DAEMON_ANSWER=unanswered ;;
+    *)   NM_DAEMON_ANSWER=down ;;
+  esac
 }
 
 nm_ci_step_status() {
@@ -650,7 +723,11 @@ nm_ci_checks_state() {
 # matching run: either it names another branch (routine once several crews
 # validate the same underlying repo concurrently - a worktree with its own
 # active run reliably gets that run answered, even under concurrent load), or
-# it names this branch's run but the strict head rule rejected it. The real
+# it names this branch's run but the strict head rule rejected it - a run that
+# is parked, terminal, or executing with the daemon answered down, since an
+# executing run whose daemon still answers binds before this fallback is
+# reached. The ledger resolves every answer STRICTLY: it never accepts a row on
+# branch name alone, so a head-tied row can re-bind such a record as working. The real
 # run-listing command is the top-level `no-mistakes runs` (the `axi` surface
 # has no runs-listing subcommand; tests/fm-crew-state.test.sh owns the
 # 2026-07-02 dead-code incident history this fallback replaced).
@@ -687,6 +764,8 @@ HAVE_RUN=0
 # word came back from the runs-list fallback, so the run-step block below skips
 # the TOON field parsing entirely for this crew.
 RUN_SOURCE=full
+NM_DAEMON_ANSWER=""
+RUN_DEAD_DAEMON=""
 COARSE_STATUS=""
 SELECTED_RUN_ID=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
@@ -731,12 +810,19 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
         if [ "$(fm_nm_run_status_class "$selected_status")" != "$current_class" ]; then
           emit unknown run-step "selected run status disagrees with inventory; run ids: $candidate_ids"
         fi
-        if nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; then
+        if nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
+          || { fm_nm_run_is_executing "$RUN_OUT" && ! nm_daemon_answered_down; }; then
           HAVE_RUN=1
         elif [ -z "$(fm_nm_resolve_commit "$WT" "$(strip_quotes "$(nm_field head)")")" ]; then
           if fm_nm_run_is_active "$RUN_OUT" \
             && [ "$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$(nm_runs_list)" "$(strip_quotes "$(nm_field head)")")" = running ]; then
+            # The anchor PROVED code identity; only liveness can still fail, so
+            # a dead daemon is reported as such rather than as an identity
+            # failure, and a parked run keeps its gate and findings.
             HAVE_RUN=1
+            if ! fm_nm_run_is_parked "$RUN_OUT" && nm_daemon_answered_down; then
+              RUN_DEAD_DAEMON="no-mistakes daemon unreachable; last run record $(strip_quotes "$(nm_field status)") - unverified"
+            fi
           else
             emit unknown run-step "selected run code identity unverified; run ids: $candidate_ids"
           fi
@@ -746,12 +832,17 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
     esac
     if [ "$HAVE_RUN" = 0 ] && [ -z "$SELECTED_RUN_ID" ]; then
       run_branch=$(strip_quotes "$(nm_field branch)")
-      # Head equality, or the pipeline-owned-active exemption: while the
-      # pipeline owns this branch, the daemon's own branch attribution is
-      # authoritative and the lane head need not be a git object here
-      # (fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh).
+      # Head equality, the pipeline-owned parked-run exemption, or executing
+      # regardless of head: a live run on this branch is current even after a
+      # rebase, and while the pipeline owns this branch a parked run binds
+      # without the lane head being a git object here (fm_nm_run_is_executing
+      # and fm_nm_run_is_pipeline_owned_active in bin/fm-nm-run-lib.sh). The
+      # head-free route additionally needs the daemon not provably down, so a
+      # record left saying `running` by a dead daemon stops answering once the
+      # worktree moves off the run head.
       if [ -n "$run_branch" ] && [ "$run_branch" = "$CREW_BRANCH" ] \
-        && { nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT"; }; then
+        && { nm_run_head_matches_worktree || fm_nm_run_is_pipeline_owned_active "$RUN_OUT" \
+          || { fm_nm_run_is_executing "$RUN_OUT" && ! nm_daemon_answered_down; }; }; then
         HAVE_RUN=1
         # Without run ids, contradictory liveness cannot prove precedence.
         # A live replacement also needs an id-addressed status read: a bare
@@ -801,13 +892,19 @@ if [ "$HAVE_RUN" = 1 ]; then
   CI_STEP_STATUS=""
   CI_LOG_STATE=""
   RUN_STATUS=""
-  if [ "$RUN_SOURCE" = coarse ]; then
+  if [ -n "$RUN_DEAD_DAEMON" ]; then
+    # ONE dead-instrument verdict for every route that reaches one. It is set,
+    # not emitted, so the status-log reconciliation below still runs: an
+    # unverified record must not silence the crew's own open decision.
+    RUN_STATE=unknown
+    RUN_DETAIL=$RUN_DEAD_DAEMON
+  elif [ "$RUN_SOURCE" = coarse ]; then
     # No step/gate detail is available from the plain runs list - only ever
     # working, done, failed, or unknown. Gate detail requires the identity-aware
     # read above. The status event span remains independently available to the
     # supervisor through fm-classify-lib.sh's status_span_first_actionable.
     case "$COARSE_STATUS" in
-      running)   RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
+      running) RUN_STATE=working; RUN_DETAIL="validating (background run)" ;;
       completed) RUN_STATE="done";  RUN_DETAIL="run completed" ;;
       failed)
         # The ledger row is terminal but the coarse path has no steps table
@@ -827,7 +924,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     status=$(strip_quotes "$(nm_field status)")
     RUN_STATUS=$status
     outcome=$(strip_quotes "$(nm_field outcome)")
-    awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
+    awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E "$FM_NM_AWAITING_AGENT_RE" | head -1 || true)
     gate_status=$(nm_gate_status)
     has_gate=0
     nm_has_gate && has_gate=1
@@ -928,6 +1025,14 @@ if [ "$HAVE_RUN" = 1 ]; then
         && [ "$(status_line_verb "$LOG_LATEST")" = blocked ] \
         && log_reports_daemon_socket_down "$LOG_LATEST"; then
         emit blocked status-log "$(status_line_note "$LOG_LATEST")${SEP}daemon socket down despite attributed run record"
+      fi
+      # An UNVERIFIED record cannot close an open decision. The crew observed
+      # its gate or its blocker first hand; a record the dead instrument left
+      # behind is the weaker witness, so the log answers and the unverified
+      # record is reported as the reason rather than replacing it.
+      LOG_TIP_STATE=$(map_log_state "$LOG_LINE")
+      if [ -n "$RUN_DEAD_DAEMON" ]; then
+        emit "$LOG_TIP_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}${RUN_DEAD_DAEMON}${SELECTED_RUN_ID:+${SEP}run: $SELECTED_RUN_ID}"
       fi
       if [ "$RUN_STATE" != parked ]; then
         if [ "$RUN_STATE" = working ]; then
