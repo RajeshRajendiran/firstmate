@@ -41,9 +41,14 @@
 # invocations in the core bin/ and bin/backends/ scripts so every configured
 # backlog backend follows the same tasks-axi lifecycle path.
 #
-# Lint defaults to two bounded workers over two stable logical shards.
-# Diagnostics replay in stable shard/root order. FM_LINT_JOBS=1 changes
-# concurrency, not diagnostics or exit selection.
+# Lint runs four stable logical shards on one to four bounded workers, by
+# default as many as the machine has CPUs (at least two). Diagnostics replay in
+# stable shard/root order. FM_LINT_JOBS=1 changes concurrency, not diagnostics
+# or exit selection.
+# Source-following roots are each analyzed against a private view of the
+# repository that includes every library once (see fm_lint_build_view), because
+# ShellCheck otherwise re-analyzes a library at every include site; findings are
+# identical to following every site.
 # --partition 1of2/2of2 splits the entire canonical inventory across
 # two CI runners, each with those same bounded workers. Partitions are complete,
 # disjoint, and byte-weight balanced; --list-files exposes their actual roots.
@@ -58,7 +63,7 @@
 #   fm-lint.sh                         lint the context-selected file set (see above)
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
-#   fm-lint.sh --jobs <1|2> [path]...  override bounded worker count
+#   fm-lint.sh --jobs <1-4> [path]...  override bounded worker count
 #   fm-lint.sh --partition <1of2|2of2> lint one full-rigor canonical CI partition
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
@@ -84,8 +89,80 @@ fm_lint_worker_stop() {
   FM_LINT_WORKER_SHELLCHECK_PID=
 }
 
+# ShellCheck re-parses and re-analyzes a sourced file at every include site, so
+# a library reached through several paths costs its full size once per path and
+# a root's cost tracks its expanded include tree rather than the unique graph.
+# The view builder gives one root a private mirror of the repository in which
+# each library is included by directive once, at its first site in ShellCheck's
+# traversal order, and later sites in non-test files become source=/dev/null.
+# Every function and variable stays visible where it first appeared, so the
+# findings are identical while the work drops toward the unique graph. Test
+# files keep every site because they source inside subshells, where a second
+# include changes the findings. FM_LINT_DEDUPE_SOURCES=0 disables the view.
+FM_LINT_VIEW_PERL=$(cat <<'PERL'
+use strict;
+use warnings;
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
+use Cwd qw(getcwd);
+my ($root, $dest) = @ARGV;
+my $cwd = getcwd();
+my %seen = ($root => 1);
+my %written;
+sub visit {
+  my ($path) = @_;
+  return if $written{$path}++;
+  my @lines;
+  if (open(my $in, '<', $path)) { @lines = <$in>; close $in; }
+  for (my $i = 0; $i <= $#lines; $i++) {
+    next unless $lines[$i] =~ m{^\s*#\s*shellcheck\s+source=(\S+)\s*$};
+    my $target = $1;
+    next if $target eq '/dev/null' or !-f $target;
+    my $j = $i + 1;
+    $j++ while $j <= $#lines and $lines[$j] =~ /^\s*(#.*)?$/;
+    next unless $j <= $#lines and $lines[$j] =~ /^\s*(?:\.|source)\s/;
+    if ($seen{$target}) {
+      # Test files stay per-site: they source inside subshells whose scoping
+      # decides findings such as SC2031.
+      $lines[$i] =~ s{source=\S+}{source=/dev/null} unless $path =~ m{^tests/};
+      next;
+    }
+    $seen{$target} = 1;
+    visit($target);
+  }
+  my $out = "$dest/$path";
+  make_path(dirname($out));
+  open(my $o, '>', $out) or die "$out: $!";
+  print $o @lines;
+  close $o;
+}
+visit($root);
+# Mirror the rest of the tree by symlink so sources reached without a
+# directive still resolve exactly as in the real tree.
+sub mirror {
+  my ($rel) = @_;
+  my $src = $rel eq '' ? $cwd : "$cwd/$rel";
+  my $dst = $rel eq '' ? $dest : "$dest/$rel";
+  opendir(my $d, $src) or return;
+  my @entries = grep { $_ ne '.' && $_ ne '..' && $_ ne '.git' } readdir $d;
+  closedir $d;
+  for my $e (@entries) {
+    my $r = $rel eq '' ? $e : "$rel/$e";
+    if (-d "$dst/$e" && !-l "$dst/$e") { mirror($r); next; }
+    next if -e "$dst/$e" || -l "$dst/$e";
+    symlink("$src/$e", "$dst/$e");
+  }
+}
+mirror('');
+PERL
+)
+
+fm_lint_build_view() {  # <root-path> <view-dir>
+  perl -e "$FM_LINT_VIEW_PERL" -- "$1" "$2"
+}
+
 fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
-  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output invocation_rc rc=0
+  local manifest=$1 output_dir=$2 shard_index=$3 tab index path output invocation_rc view rc=0
   local -a roots shellcheck_args
   roots=()
   tab=$(printf '\t')
@@ -109,23 +186,33 @@ fm_lint_worker() {  # <manifest> <output-dir> <shard-index>
       shellcheck_args+=(--extended-analysis=false)
     fi
     : > "$output.out"
-    if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ]; then
-      "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "${roots[@]}" >> "$output.out" 2>&1 &
+    for path in "${roots[@]}"; do
+      invocation_rc=0
+      view=
+      if [ "${FM_LINT_INTERNAL_FOLLOW_SOURCES:-1}" -eq 1 ] && [ "${FM_LINT_DEDUPE_SOURCES:-1}" -eq 1 ]; then
+        case "$path" in
+          /*|*..*) ;;
+          *)
+            if [ -f "$path" ]; then
+              view="$output_dir/view.$shard_index"
+              rm -rf "$view"
+              fm_lint_build_view "$path" "$view" || { rm -rf "$view"; view=; }
+            fi
+            ;;
+        esac
+      fi
+      (
+        [ -z "$view" ] || cd "$view" || exit 2
+        exec "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path"
+      ) >> "$output.out" 2>&1 &
       FM_LINT_WORKER_SHELLCHECK_PID=$!
-      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || rc=$?
+      wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
       FM_LINT_WORKER_SHELLCHECK_PID=
-    else
-      for path in "${roots[@]}"; do
-        invocation_rc=0
-        "$FM_LINT_SHELLCHECK" "${shellcheck_args[@]}" -- "$path" >> "$output.out" 2>&1 &
-        FM_LINT_WORKER_SHELLCHECK_PID=$!
-        wait "$FM_LINT_WORKER_SHELLCHECK_PID" || invocation_rc=$?
-        FM_LINT_WORKER_SHELLCHECK_PID=
-        if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
-          rc=$invocation_rc
-        fi
-      done
-    fi
+      [ -z "$view" ] || rm -rf "$view"
+      if [ "$rc" -eq 0 ] && [ "$invocation_rc" -ne 0 ]; then
+        rc=$invocation_rc
+      fi
+    done
     trap - HUP INT TERM
   else
     : > "$output.out"
@@ -398,7 +485,16 @@ fm_lint_run_backend_purity() {
   }
 }
 
-JOBS=${FM_LINT_JOBS:-2}
+# Default concurrency follows the machine but stays inside the 1-4 bound: one
+# ShellCheck root holds over a gigabyte, so more workers than cores or four buys
+# nothing. An unknown CPU count keeps the historical two.
+JOBS=${FM_LINT_JOBS:-}
+if [ -z "$JOBS" ]; then
+  JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '2')
+  case "$JOBS" in ''|*[!0-9]*) JOBS=2 ;; esac
+  [ "$JOBS" -ge 2 ] || JOBS=2
+  [ "$JOBS" -le 4 ] || JOBS=4
+fi
 TELEMETRY=${FM_LINT_TELEMETRY:-}
 FAST=0
 ANALYSIS_MODE=full
@@ -408,7 +504,7 @@ LIST_FILES=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jobs)
-      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
+      [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 to 4.\n' >&2; exit 2; }
       JOBS=$2
       shift 2
       ;;
@@ -458,8 +554,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$JOBS" in
-  1|2) ;;
-  *) printf 'fm-lint.sh: jobs must be 1 or 2, got %s.\n' "$JOBS" >&2; exit 2 ;;
+  1|2|3|4) ;;
+  *) printf 'fm-lint.sh: jobs must be between 1 and 4, got %s.\n' "$JOBS" >&2; exit 2 ;;
 esac
 
 case "$PARTITION" in
@@ -667,7 +763,7 @@ trap 'exit 143' TERM
 WEIGHTS="$TMP_ROOT/weights"
 OUTPUT_DIR="$TMP_ROOT/output"
 mkdir -p "$OUTPUT_DIR"
-SHARD_COUNT=2
+SHARD_COUNT=4
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   : > "$TMP_ROOT/manifest.$worker"
@@ -676,16 +772,18 @@ done
 
 fm_lint_root_weights > "$WEIGHTS" || exit $?
 
-# Largest-first deterministic greedy assignment keeps the two bounded workers
+# Largest-first deterministic greedy assignment keeps the bounded workers
 # balanced without affecting replay order. Direct bytes are a stable portable
 # proxy after the expensive dynamic adapter source fan-out is cut.
-WORKER_LOADS=(0 0)
+WORKER_LOADS=(0 0 0 0)
 LC_ALL=C sort -t "$TAB" -k1,1nr -k2,2n "$WEIGHTS" > "$WEIGHTS.sorted"
 while IFS="$TAB" read -r weight index path; do
   worker=0
-  if [ "${WORKER_LOADS[1]}" -lt "${WORKER_LOADS[0]}" ]; then
-    worker=1
-  fi
+  for candidate in 1 2 3; do
+    if [ "${WORKER_LOADS[candidate]}" -lt "${WORKER_LOADS[worker]}" ]; then
+      worker=$candidate
+    fi
+  done
   printf '%s\t%s\n' "$index" "$path" >> "$TMP_ROOT/manifest.$worker"
   WORKER_LOADS[worker]=$((WORKER_LOADS[worker] + weight))
 done < "$WEIGHTS.sorted"
@@ -773,23 +871,18 @@ fm_lint_wait_workers() {
   done
 }
 
-if [ "$JOBS" -eq 1 ]; then
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
-    fm_lint_wait_workers
-    worker=$((worker + 1))
-  done
-else
-  worker=0
-  while [ "$worker" -lt "$SHARD_COUNT" ]; do
-    fm_lint_start_worker "$worker"
-    worker=$((worker + 1))
-  done
-  fm_lint_wait_workers
-fi
+worker=0
+while [ "$worker" -lt "$SHARD_COUNT" ]; do
+  if [ "${#ACTIVE_PIDS[@]}" -ge "$JOBS" ]; then
+    wait "${ACTIVE_PIDS[0]}" 2>/dev/null || true
+    ACTIVE_PIDS=("${ACTIVE_PIDS[@]:1}")
+  fi
+  fm_lint_start_worker "$worker"
+  worker=$((worker + 1))
+done
+fm_lint_wait_workers
 
-# Replay both stable shards in deterministic order and select the first nonzero
+# Replay every stable shard in deterministic order and select the first nonzero
 # shard status. ShellCheck processes every root in a shard after earlier findings.
 overall_rc=0
 worker=0
@@ -901,6 +994,8 @@ EOF
     printf 'source_target_count\t%s\n' "$source_targets"
     printf 'shard_1_weight_bytes\t%s\n' "${WORKER_LOADS[0]}"
     printf 'shard_2_weight_bytes\t%s\n' "${WORKER_LOADS[1]:-0}"
+    printf 'shard_3_weight_bytes\t%s\n' "${WORKER_LOADS[2]:-0}"
+    printf 'shard_4_weight_bytes\t%s\n' "${WORKER_LOADS[3]:-0}"
     printf 'wall_seconds\t%s\n' "$((TELEMETRY_END_EPOCH - TELEMETRY_START_EPOCH))"
     printf 'worker_wall_sum_seconds\t%s\n' "$timing_worker_wall"
     printf 'max_worker_wall_seconds\t%s\n' "$max_worker_wall"

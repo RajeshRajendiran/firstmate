@@ -1230,8 +1230,11 @@ SH
   assert_contains "$out_fail_1" "SC1007" "the first failing root diagnostic was lost"
   assert_contains "$out_fail_1" "SC2086" "the later failing root diagnostic was lost"
   rc_bad_jobs=0
-  FM_LINT_JOBS=3 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
+  FM_LINT_JOBS=5 "$LINT" "$good" >/dev/null 2>&1 || rc_bad_jobs=$?
   [ "$rc_bad_jobs" -eq 2 ] || fail "the lint owner must reject unbounded worker counts"
+  local out_fail_4
+  out_fail_4=$(FM_LINT_JOBS=4 "$LINT" "$bad_a" "$bad_b" 2>&1) || true
+  [ "$out_fail_4" = "$out_fail_1" ] || fail "jobs=4 diagnostics differ from jobs=1"
 
   telemetry_out=$(FM_LINT_JOBS=2 FM_LINT_TELEMETRY="$telemetry" "$LINT" "$good" 2>&1) \
     || fail "telemetry-enabled clean lint failed"
@@ -1255,6 +1258,60 @@ SH
   [ -z "$(find "$cleanup_tmp" -mindepth 1 -maxdepth 1 -name 'fm-lint.*' -print -quit)" ] \
     || fail "bounded lint left temporary worker state behind"
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
+}
+
+test_source_view_keeps_cross_file_findings_and_follows_each_library_once() {
+  if ! pinned_ready; then
+    pass "SKIP (ShellCheck $REQUIRED not resolved): source view check"
+    return
+  fi
+  local tmp repo fakebin log out_view out_full
+  tmp=$(fm_test_tmproot fm-lint-view)
+  repo="$tmp/repo"
+  fakebin="$tmp/fakebin"
+  log="$tmp/shellcheck.log"
+  mkdir -p "$repo/bin" "$fakebin"
+  cp "$LINT" "$repo/bin/fm-lint.sh"
+  cat > "$repo/bin/lib-a.sh" <<'SH'
+#!/usr/bin/env bash
+helper_a() {
+  printf '%s\n' "$1"
+}
+SH
+  cat > "$repo/bin/lib-b.sh" <<'SH'
+#!/usr/bin/env bash
+# shellcheck source=bin/lib-a.sh
+. bin/lib-a.sh
+helper_b() {
+  printf 'b\n'
+}
+SH
+  # helper_a is called without arguments, so SC2119 exists only when the
+  # sourced definition is followed; lib-a is reached through both paths.
+  cat > "$repo/bin/root.sh" <<'SH'
+#!/usr/bin/env bash
+# shellcheck source=bin/lib-a.sh
+. bin/lib-a.sh
+# shellcheck source=bin/lib-b.sh
+. bin/lib-b.sh
+helper_a
+helper_b
+SH
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+[ "\$1" != --norc ] || pwd -P >> '$log'
+exec '$(command -v shellcheck)' "\$@"
+SH
+  chmod +x "$fakebin/shellcheck"
+  out_view=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=1 bin/fm-lint.sh bin/root.sh 2>&1) || true
+  assert_contains "$out_view" "SC2119" "the source view lost a finding only cross-file analysis can produce"
+  [ -s "$log" ] || fail "the followed root was never analyzed"
+  ! grep -qx "$(cd "$repo" && pwd -P)" "$log" || fail "the followed root was not analyzed against its own source view"
+  : > "$log"
+  out_full=$(cd "$repo" && PATH="$fakebin:$PATH" FM_LINT_JOBS=1 FM_LINT_DEDUPE_SOURCES=0 bin/fm-lint.sh bin/root.sh 2>&1) || true
+  [ "$out_view" = "$out_full" ] || fail "the source view changed the diagnostics against following every site"
+  grep -qx "$(cd "$repo" && pwd -P)" "$log" || fail "disabling the source view must analyze in place"
+  pass "the source view preserves cross-file findings and matches following every site"
 }
 
 test_worker_trees_stop_on_signal() {
@@ -1426,6 +1483,7 @@ test_rejects_direct_beads_cli_in_explicit_core_path
 test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
+test_source_view_keeps_cross_file_findings_and_follows_each_library_once
 test_worker_trees_stop_on_signal
 test_seeded_module_boundary_parity
 test_changed_mode_lints_only_the_changed_file
