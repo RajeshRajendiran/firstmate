@@ -124,7 +124,7 @@ def _split_telegram_html(text, max_len=4096):
             if cur + len(_tok_str(tokens[j])) + len(_closers(new_st)) > max_len and j > i:
                 break
             cur += len(_tok_str(tokens[j]))
-            if tokens[j][0] == "nl":
+            if tokens[j][0] == "nl" and j > i:
                 last_nl = (j, list(st))
             st = new_st
             j += 1
