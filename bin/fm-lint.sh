@@ -93,8 +93,10 @@ fm_lint_worker_stop() {
 # a library reached through several paths costs its full size once per path and
 # a root's cost tracks its expanded include tree rather than the unique graph.
 # The view builder gives one root a private mirror of the repository in which
-# each library is included by directive once, at its first site in ShellCheck's
-# traversal order, and later sites in non-test files become source=/dev/null.
+# each library is included by directive once, at its first top-level site in
+# ShellCheck's traversal order, and later top-level sites in non-test files
+# become source=/dev/null. Indented sites (functions, subshells, conditionals)
+# are scope-dependent, so they are neither deduped nor counted as a first site.
 # Every function and variable stays visible where it first appeared, so the
 # findings are identical while the work drops toward the unique graph. Test
 # files keep every site because they source inside subshells, where a second
@@ -115,12 +117,12 @@ sub visit {
   my @lines;
   if (open(my $in, '<', $path)) { @lines = <$in>; close $in; }
   for (my $i = 0; $i <= $#lines; $i++) {
-    next unless $lines[$i] =~ m{^\s*#\s*shellcheck\s+source=(\S+)\s*$};
+    next unless $lines[$i] =~ m{^#\s*shellcheck\s+source=(\S+)\s*$};
     my $target = $1;
     next if $target eq '/dev/null' or !-f $target;
     my $j = $i + 1;
     $j++ while $j <= $#lines and $lines[$j] =~ /^\s*(#.*)?$/;
-    next unless $j <= $#lines and $lines[$j] =~ /^\s*(?:\.|source)\s/;
+    next unless $j <= $#lines and $lines[$j] =~ /^(?:\.|source)\s/;
     if ($seen{$target}) {
       # Test files stay per-site: they source inside subshells whose scoping
       # decides findings such as SC2031.
