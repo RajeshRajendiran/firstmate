@@ -47,8 +47,8 @@
 # or exit selection.
 # Source-following roots are each analyzed against a private view of the
 # repository that includes every library once (see fm_lint_build_view), because
-# ShellCheck otherwise re-analyzes a library at every include site; findings are
-# identical to following every site.
+# ShellCheck otherwise re-analyzes a library at every include site; only later
+# top-level sites are collapsed, so scope-dependent sites still follow the library.
 # --partition 1of2/2of2 splits the entire canonical inventory across
 # two CI runners, each with those same bounded workers. Partitions are complete,
 # disjoint, and byte-weight balanced; --list-files exposes their actual roots.
