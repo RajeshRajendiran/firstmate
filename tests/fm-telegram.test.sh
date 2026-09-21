@@ -261,34 +261,33 @@ test_send_splits_at_line_boundary() {
   assert_contains "$chunk1" "chat_id" "first chunk targets the captain chat"
   assert_contains "$chunk2" "chat_id" "second chunk targets the captain chat"
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk1")
-  assert_equals "2500" "$len" "first chunk length is one line"
+  assert_equals "2501" "$len" "first chunk keeps the blank item separator"
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk2")
-  assert_equals "2501" "$len" "second chunk keeps its trailing newline"
+  assert_equals "2500" "$len" "second chunk contains the second line"
   pass "fm-telegram: send splits long text at line boundaries"
 }
 
-test_send_formats_and_escapes() {
-  local fakebin out home body
+test_send_formats_plain_readable_text() {
+  local fakebin out home body text
   home=$(make_tg_home "$TMP_ROOT/send-fmt-home")
   fakebin=$(fm_fakebin "$TMP_ROOT")
   make_fake_curl "$fakebin"
   export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/send-fmt.log" FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}'
   : > "$FM_TELEGRAM_CURL_LOG"
   # shellcheck disable=SC2016
-  printf '%s\n' '**PR ready** - cost <$5 & a>b `x<y`' > "$TMP_ROOT/fmt.txt"
+  printf '%s\n' '**PR ready** - cost <$5 & a>b `x<y`' 'See [the PR](https://example.test/pull/1) for details.' 'review' > "$TMP_ROOT/fmt.txt"
   out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
     FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
     "$TELEGRAM" send - < "$TMP_ROOT/fmt.txt" 2>&1)
-  expect_code 0 "$?" "formatted send must succeed"
+  expect_code 0 "$?" "readable send must succeed"
   body=$(cut -f3 "$FM_TELEGRAM_CURL_LOG")
-  assert_equals "HTML" "$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["parse_mode"])' "$body")" "send sets parse_mode HTML"
-  # shellcheck disable=SC2016
-  assert_equals '<b>PR ready</b> - cost &lt;$5 &amp; a&gt;b <code>x&lt;y</code>' \
-    "$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["text"].rstrip())' "$body")" "body is escaped and markup rendered"
-  pass "fm-telegram: send renders markup and escapes the body"
+  text=$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["text"])' "$body")
+  assert_not_contains "$body" 'parse_mode' "readable send uses Telegram plain text"
+  assert_equals $'PR ready - cost <$5 & a>b x<y\n\nSee the PR\n\nhttps://example.test/pull/1\n\nfor details.\n\nreview' "$text" "body is normalized for phone readability"
+  pass "fm-telegram: send produces plain scannable output"
 }
 
-test_send_html_chunks_are_well_formed() {
+test_send_plain_chunks_are_bounded() {
   local fakebin out home
   home=$(make_tg_home "$TMP_ROOT/send-wf-home")
   fakebin=$(fm_fakebin "$TMP_ROOT")
@@ -299,19 +298,18 @@ test_send_html_chunks_are_well_formed() {
   out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
     FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
     "$TELEGRAM" send - < "$TMP_ROOT/wf.txt" 2>&1)
-  expect_code 0 "$?" "long formatted send must succeed"
-  python3 - "$FM_TELEGRAM_CURL_LOG" <<'PY' || fail "every chunk must be independently well formed"
-import json, re, sys
+  expect_code 0 "$?" "long plain send must succeed"
+  python3 - "$FM_TELEGRAM_CURL_LOG" <<'PY' || fail "every plain chunk must stay bounded and readable"
+import json, sys
 rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[1])]
 assert len(rows) >= 3, len(rows)
 for r in rows:
-    t = json.loads(r[2])["text"]
-    assert len(t) <= 4096, len(t)
-    assert t.startswith("<b>") and t.rstrip().endswith("</b>"), t[:20]
-    assert t.count("<b>") == t.count("</b>") == 1
-    assert not re.search(r"&(?!amp;)", t), "bare ampersand"
+    payload = json.loads(r[2])
+    assert len(payload["text"]) <= 4096, len(payload["text"])
+    assert "parse_mode" not in payload
+    assert "**" not in payload["text"]
 PY
-  pass "fm-telegram: split chunks reopen tags and stay well formed"
+  pass "fm-telegram: plain chunks stay bounded"
 }
 
 test_send_never_posts_blank_chunks() {
@@ -334,36 +332,6 @@ for r in rows:
     assert json.loads(r[2])["text"].strip(), "blank chunk posted"
 PY
   pass "fm-telegram: send never posts blank chunks"
-}
-
-test_send_falls_back_unformatted_on_markup_rejection() {
-  local fakebin out home
-  home=$(make_tg_home "$TMP_ROOT/send-fb-home")
-  fakebin=$(fm_fakebin "$TMP_ROOT")
-  cat > "$fakebin/curl" <<'SH'
-#!/usr/bin/env bash
-body=""
-while [ $# -gt 0 ]; do
-  case "$1" in -d) body="$2"; shift 2 ;; *) shift ;; esac
-done
-printf '%s\n' "$body" >> "$FM_TELEGRAM_CURL_LOG"
-case "$body" in
-  *parse_mode*) printf '{"ok":false,"description":"Bad Request: can'"'"'t parse entities"}\n400' ;;
-  *) printf '{"ok":true,"result":{"message_id":1}}\n200' ;;
-esac
-SH
-  chmod +x "$fakebin/curl"
-  export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/send-fb.log"
-  : > "$FM_TELEGRAM_CURL_LOG"
-  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
-    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
-    "$TELEGRAM" send '**hi** a<b' 2>&1)
-  expect_code 0 "$?" "fallback send must succeed"
-  assert_contains "$out" "fallback: 1/1" "fallback is visible in output"
-  assert_contains "$out" "delivered: 1/1" "unformatted resend is delivered"
-  assert_contains "$(tail -1 "$FM_TELEGRAM_CURL_LOG")" '"text": "hi a<b"' "resend carries plain text"
-  assert_not_contains "$(tail -1 "$FM_TELEGRAM_CURL_LOG")" "parse_mode" "resend has no parse_mode"
-  pass "fm-telegram: markup rejection falls back to unformatted text"
 }
 
 test_send_reports_delivered() {
@@ -490,10 +458,9 @@ test_poll_chat_filter_and_wake
 test_poll_counts_dropped_updates
 test_poll_dedupes_on_second_run
 test_send_splits_at_line_boundary
-test_send_formats_and_escapes
-test_send_html_chunks_are_well_formed
+test_send_formats_plain_readable_text
+test_send_plain_chunks_are_bounded
 test_send_never_posts_blank_chunks
-test_send_falls_back_unformatted_on_markup_rejection
 test_send_reports_delivered
 test_send_reports_not_delivered
 test_send_reports_ambiguous

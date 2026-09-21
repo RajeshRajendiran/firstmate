@@ -19,12 +19,11 @@
 #                        The loop is meant to be supervised as a process-event
 #                        source; do not run two consumers for the same bot.
 #   send <text | ->      Send one or more messages to the captain chat id,
-#                        splitting at 4,096 characters on line boundaries and
-#                        respecting the one-message-per-second limit. Reports
+#                        splitting at 4,096 characters on readable item boundaries
+#                        and respecting the one-message-per-second limit. Reports
 #                        delivered, ambiguous, or not-delivered for each chunk.
-#                        Text is sent as Telegram HTML: **bold** and `code` render,
-#                        everything else is escaped, split chunks stay well formed,
-#                        and a markup rejection resends unformatted (printed as fallback).
+#                        Text is sent as plain Telegram text with one item per line,
+#                        blank lines between items, and URLs on their own lines.
 #   status               Print configuration presence (never the token) and
 #                        the last offset. No network call, no wake.
 #

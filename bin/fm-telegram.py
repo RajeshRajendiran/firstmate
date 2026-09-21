@@ -6,7 +6,6 @@ variables set by that script. It performs no state management of its own;
 all durable records, wakes, and offset advances are owned by fm-telegram.sh.
 """
 
-import html
 import json
 import os
 import re
@@ -50,111 +49,66 @@ def _api_url(prefix, token, method):
 
 
 _INLINE_MARKUP = re.compile(r"\*\*(.+?)\*\*|`(.+?)`")
-_TAG_FOR = {0: "b", 1: "code"}
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+_URL = re.compile(r"https?://[^\s<>]+")
 
 
-def _render_tokens(text):
-    """Render plain text to HTML tokens: ("open"|"close", tag), ("nl", "\n"), ("text", escaped).
+def _strip_inline_markup(text):
+    """Remove the small Markdown decoration accepted in captain replies."""
+    return _INLINE_MARKUP.sub(lambda match: match.group(1) or match.group(2), text)
 
-    Only **bold** and `code` are recognised, and only within one line, so a tag
-    never spans a newline. Everything else is escaped literally.
+
+def _readable_telegram_text(text):
+    """Make reply items scan cleanly in Telegram's plain-text renderer.
+
+    Replies are deliberately sent without a parse mode.  Normalize each source
+    line into one item, separate adjacent items with one blank line, and put URLs
+    on their own lines so Telegram cannot turn escaping or unsupported markup into
+    visible noise.
     """
-    tokens = []
-
-    def add_text(raw):
-        for ch in raw:
-            tokens.append(("text", html.escape(ch, quote=False)))
-
-    for n, line in enumerate(text.split("\n")):
-        if n:
-            tokens.append(("nl", "\n"))
-        pos = 0
-        for m in _INLINE_MARKUP.finditer(line):
-            add_text(line[pos : m.start()])
-            idx = 0 if m.group(1) is not None else 1
-            tag = _TAG_FOR[idx]
-            tokens.append(("open", tag))
-            add_text(m.group(idx + 1))
-            tokens.append(("close", tag))
-            pos = m.end()
-        add_text(line[pos:])
-    return tokens
-
-
-def _tok_str(tok):
-    kind, val = tok
-    if kind == "open":
-        return f"<{val}>"
-    if kind == "close":
-        return f"</{val}>"
-    return val
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _MARKDOWN_LINK.sub(r"\1\n\2", text)
+    text = _strip_inline_markup(text)
+    items = []
+    for source_line in text.split("\n"):
+        line = re.sub(r"[ \t]+", " ", source_line).strip()
+        if not line:
+            continue
+        start = 0
+        for match in _URL.finditer(line):
+            before = line[start : match.start()].strip()
+            if before:
+                items.append(before)
+            items.append(match.group(0))
+            start = match.end()
+        after = line[start:].strip()
+        if after:
+            items.append(after)
+    return "\n\n".join(items)
 
 
-def _closers(stack):
-    return "".join(f"</{t}>" for t in reversed(stack))
-
-
-def _apply(stack, tok):
-    kind, val = tok
-    if kind == "open":
-        return stack + [val]
-    if kind == "close":
-        return stack[:-1]
-    return stack
-
-
-def _split_telegram_html(text, max_len=4096):
-    """Render text to Telegram HTML and split into chunks of at most max_len.
-
-    Prefers newline boundaries; a tag spanning a boundary is closed at the end of
-    one chunk and reopened at the start of the next, so every chunk is well formed.
-    """
-    tokens = _render_tokens(text or "")
-    n = len(tokens)
+def _split_telegram_text(text, max_len=4096):
+    """Split readable plain text into chunks no larger than max_len."""
+    text = _readable_telegram_text(text)
+    if not text:
+        return [""]
     chunks = []
-    i = 0
-    stack = []
-    while True:
-        cur = len("".join(f"<{t}>" for t in stack))
-        st = list(stack)
-        j = i
-        last_nl = None
-        while j < n:
-            new_st = _apply(st, tokens[j])
-            if cur + len(_tok_str(tokens[j])) + len(_closers(new_st)) > max_len and j > i:
-                break
-            cur += len(_tok_str(tokens[j]))
-            if tokens[j][0] == "nl" and j > i:
-                last_nl = (j, list(st))
-            st = new_st
-            j += 1
-        opens = "".join(f"<{t}>" for t in stack)
-        if j >= n:
-            chunks.append(opens + "".join(_tok_str(t) for t in tokens[i:j]) + _closers(st))
-            return [c for c in chunks if _html_to_plain(c).strip()] or chunks[-1:]
-        if last_nl is not None:
-            k, st_k = last_nl
-            chunks.append(opens + "".join(_tok_str(t) for t in tokens[i:k]) + _closers(st_k))
-            i, stack = k + 1, st_k
-        else:
-            chunks.append(opens + "".join(_tok_str(t) for t in tokens[i:j]) + _closers(st))
-            i, stack = j, st
-
-
-def _html_to_plain(chunk):
-    return html.unescape(re.sub(r"</?(?:b|code)>", "", chunk))
-
-
-def _is_markup_rejection(status, body):
-    """True when Telegram refused the message for a markup (entity parsing) reason."""
-    if status["verdict"] != "not-delivered":
-        return False
-    try:
-        data = json.loads(body)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    desc = data.get("description", "") if isinstance(data, dict) else ""
-    return "parse entities" in desc.lower() or "can't parse" in desc.lower()
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) <= max_len:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        while len(line) > max_len:
+            chunks.append(line[:max_len])
+            line = line[max_len:]
+        current = line
+    if current:
+        chunks.append(current)
+    return [chunk for chunk in chunks if chunk.strip()] or [""]
 
 
 def _classify_send(body, rc, code):
@@ -254,20 +208,15 @@ def cmd_send():
     timeout = int(os.environ.get("FM_TELEGRAM_SEND_TIMEOUT", "30"))
     rate = float(os.environ.get("FM_TELEGRAM_SEND_RATE_LIMIT", "1"))
 
-    chunks = _split_telegram_html(text, 4096)
+    chunks = _split_telegram_text(text, 4096)
     url = _api_url(prefix, token, "sendMessage")
     total = len(chunks)
     for i, chunk in enumerate(chunks, start=1):
         if i > 1:
             time.sleep(rate)
-        payload = {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"}
+        payload = {"chat_id": chat_id, "text": chunk}
         body, rc, code = _run_curl(url, method="POST", json_payload=payload, timeout=timeout, include_code=True)
         status = _classify_send(body, rc, code)
-        if _is_markup_rejection(status, body):
-            print(f"fallback: {i}/{total}: formatting rejected ({status['reason']}); resending unformatted")
-            payload = {"chat_id": chat_id, "text": _html_to_plain(chunk)}
-            body, rc, code = _run_curl(url, method="POST", json_payload=payload, timeout=timeout, include_code=True)
-            status = _classify_send(body, rc, code)
         if status["reason"]:
             print(f"{status['verdict']}: {i}/{total}: {status['reason']}")
         else:
