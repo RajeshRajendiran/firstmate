@@ -49,42 +49,33 @@ def _api_url(prefix, token, method):
 
 
 _INLINE_MARKUP = re.compile(r"\*\*(.+?)\*\*|`(.+?)`")
-_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
-_URL = re.compile(r"https?://[^\s<>]+")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)")
+_LEAD_BOLD = re.compile(r"^(\s*)\*\*(.+?)\*\*")
 
 
-def _strip_inline_markup(text):
-    """Remove the small Markdown decoration accepted in captain replies."""
-    return _INLINE_MARKUP.sub(lambda match: match.group(1) or match.group(2), text)
+def _link_text(match):
+    label, url = match.group(1), match.group(2)
+    return url if label == url else f"{label} ({url})"
 
 
 def _readable_telegram_text(text):
-    """Make reply items scan cleanly in Telegram's plain-text renderer.
+    """Make replies scan cleanly in Telegram's plain-text renderer.
 
-    Replies are deliberately sent without a parse mode.  Normalize each source
-    line into one item, separate adjacent items with one blank line, and put URLs
-    on their own lines so Telegram cannot turn escaping or unsupported markup into
-    visible noise.
+    Replies are sent without a parse mode.  The author's line and blank-line
+    structure is kept, sentences stay whole, Markdown links become "label (url)",
+    a leading **bold** lead-in gets a marker so the item needing the captain
+    stands out, and remaining ** and ` decoration is removed.
     """
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-    text = _MARKDOWN_LINK.sub(r"\1\n\2", text)
-    text = _strip_inline_markup(text)
-    items = []
+    text = _MARKDOWN_LINK.sub(_link_text, text)
+    lines = []
     for source_line in text.split("\n"):
-        line = re.sub(r"[ \t]+", " ", source_line).strip()
-        if not line:
+        line = _LEAD_BOLD.sub(lambda m: f"{m.group(1)}\u25b6 {m.group(2)}", source_line.rstrip())
+        line = _INLINE_MARKUP.sub(lambda m: m.group(1) or m.group(2), line)
+        if not line.strip() and (not lines or not lines[-1]):
             continue
-        start = 0
-        for match in _URL.finditer(line):
-            before = line[start : match.start()].strip()
-            if before:
-                items.append(before)
-            items.append(match.group(0))
-            start = match.end()
-        after = line[start:].strip()
-        if after:
-            items.append(after)
-    return "\n\n".join(items)
+        lines.append(line.rstrip())
+    return "\n".join(lines).strip()
 
 
 def _split_telegram_text(text, max_len=4096):

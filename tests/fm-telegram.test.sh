@@ -261,7 +261,7 @@ test_send_splits_at_line_boundary() {
   assert_contains "$chunk1" "chat_id" "first chunk targets the captain chat"
   assert_contains "$chunk2" "chat_id" "second chunk targets the captain chat"
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk1")
-  assert_equals "2501" "$len" "first chunk keeps the blank item separator"
+  assert_equals "2500" "$len" "first chunk is one line"
   len=$(python3 -c 'import sys, json; print(len(json.loads(sys.argv[1])["text"]))' "$chunk2")
   assert_equals "2500" "$len" "second chunk contains the second line"
   pass "fm-telegram: send splits long text at line boundaries"
@@ -275,7 +275,7 @@ test_send_formats_plain_readable_text() {
   export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/send-fmt.log" FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}'
   : > "$FM_TELEGRAM_CURL_LOG"
   # shellcheck disable=SC2016
-  printf '%s\n' '**PR ready** - cost <$5 & a>b `x<y`' 'See [the PR](https://example.test/pull/1) for details.' 'review' > "$TMP_ROOT/fmt.txt"
+  printf '%s\n' '**PR ready** - cost <$5 & a>b `x<y`' 'See [the PR](https://example.test/pull/1) for details.' 'https://example.test/x.' '' '' '- one' '- two' > "$TMP_ROOT/fmt.txt"
   out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
     FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
     "$TELEGRAM" send - < "$TMP_ROOT/fmt.txt" 2>&1)
@@ -283,7 +283,7 @@ test_send_formats_plain_readable_text() {
   body=$(cut -f3 "$FM_TELEGRAM_CURL_LOG")
   text=$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["text"])' "$body")
   assert_not_contains "$body" 'parse_mode' "readable send uses Telegram plain text"
-  assert_equals $'PR ready - cost <$5 & a>b x<y\n\nSee the PR\n\nhttps://example.test/pull/1\n\nfor details.\n\nreview' "$text" "body is normalized for phone readability"
+  assert_equals $'\u25b6 PR ready - cost <$5 & a>b x<y\nSee the PR (https://example.test/pull/1) for details.\nhttps://example.test/x.\n\n- one\n- two' "$text" "body is normalized for phone readability"
   pass "fm-telegram: send produces plain scannable output"
 }
 
