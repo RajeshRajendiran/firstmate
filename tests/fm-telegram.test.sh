@@ -314,6 +314,28 @@ PY
   pass "fm-telegram: split chunks reopen tags and stay well formed"
 }
 
+test_send_never_posts_blank_chunks() {
+  local fakebin out home
+  home=$(make_tg_home "$TMP_ROOT/send-blank-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT")
+  make_fake_curl "$fakebin"
+  export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/send-blank.log" FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}'
+  : > "$FM_TELEGRAM_CURL_LOG"
+  python3 -c 'print("a\n" * 2048 + "\n\n" + "z" * 5000)' > "$TMP_ROOT/blank.txt"
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" send - < "$TMP_ROOT/blank.txt" 2>&1)
+  expect_code 0 "$?" "send with blank-line boundary must succeed"
+  python3 - "$FM_TELEGRAM_CURL_LOG" <<'PY' || fail "no posted chunk may be blank"
+import json, sys
+rows = [l.rstrip("\n").split("\t") for l in open(sys.argv[1])]
+assert len(rows) >= 3, len(rows)
+for r in rows:
+    assert json.loads(r[2])["text"].strip(), "blank chunk posted"
+PY
+  pass "fm-telegram: send never posts blank chunks"
+}
+
 test_send_falls_back_unformatted_on_markup_rejection() {
   local fakebin out home
   home=$(make_tg_home "$TMP_ROOT/send-fb-home")
@@ -470,6 +492,7 @@ test_poll_dedupes_on_second_run
 test_send_splits_at_line_boundary
 test_send_formats_and_escapes
 test_send_html_chunks_are_well_formed
+test_send_never_posts_blank_chunks
 test_send_falls_back_unformatted_on_markup_rejection
 test_send_reports_delivered
 test_send_reports_not_delivered

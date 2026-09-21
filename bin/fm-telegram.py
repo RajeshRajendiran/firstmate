@@ -131,7 +131,7 @@ def _split_telegram_html(text, max_len=4096):
         opens = "".join(f"<{t}>" for t in stack)
         if j >= n:
             chunks.append(opens + "".join(_tok_str(t) for t in tokens[i:j]) + _closers(st))
-            return chunks
+            return [c for c in chunks if _html_to_plain(c).strip()] or chunks[-1:]
         if last_nl is not None:
             k, st_k = last_nl
             chunks.append(opens + "".join(_tok_str(t) for t in tokens[i:k]) + _closers(st_k))
