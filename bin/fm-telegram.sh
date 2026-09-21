@@ -22,6 +22,9 @@
 #                        splitting at 4,096 characters on line boundaries and
 #                        respecting the one-message-per-second limit. Reports
 #                        delivered, ambiguous, or not-delivered for each chunk.
+#                        Text is sent as Telegram HTML: **bold** and `code` render,
+#                        everything else is escaped, split chunks stay well formed,
+#                        and a markup rejection resends unformatted (printed as fallback).
 #   status               Print configuration presence (never the token) and
 #                        the last offset. No network call, no wake.
 #
