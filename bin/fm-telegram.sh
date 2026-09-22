@@ -22,8 +22,8 @@
 #                        splitting at 4,096 characters on line boundaries
 #                        and respecting the one-message-per-second limit. Reports
 #                        delivered, ambiguous, or not-delivered for each chunk.
-#                        Text is sent as plain Telegram text keeping the source line structure,
-#                        with Markdown links written as "label (url)".
+#                        Text keeps the source line structure and uses Telegram message
+#                        entities for supported emphasis and Markdown links.
 #   status               Print configuration presence (never the token) and
 #                        the last offset. No network call, no wake.
 #

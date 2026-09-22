@@ -267,7 +267,7 @@ test_send_splits_at_line_boundary() {
   pass "fm-telegram: send splits long text at line boundaries"
 }
 
-test_send_formats_plain_readable_text() {
+test_send_formats_with_entities() {
   local fakebin out home body text
   home=$(make_tg_home "$TMP_ROOT/send-fmt-home")
   fakebin=$(fm_fakebin "$TMP_ROOT")
@@ -282,9 +282,18 @@ test_send_formats_plain_readable_text() {
   expect_code 0 "$?" "readable send must succeed"
   body=$(cut -f3 "$FM_TELEGRAM_CURL_LOG")
   text=$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])["text"])' "$body")
-  assert_not_contains "$body" 'parse_mode' "readable send uses Telegram plain text"
-  assert_equals $'\u25b6 PR ready - cost <$5 & a>b x<y\nSee the PR (https://example.test/pull/1) for details.\nhttps://example.test/x.\n\n- one\n- two' "$text" "body is normalized for phone readability"
-  pass "fm-telegram: send produces plain scannable output"
+  assert_not_contains "$body" 'parse_mode' "entity send does not use a parse mode"
+  assert_equals $'PR ready - cost <$5 & a>b x<y\nSee the PR for details.\nhttps://example.test/x.\n\n- one\n- two' "$text" "body keeps special characters and phone-readable layout"
+  python3 - "$body" <<'PY' || fail "entities preserve emphasis and the inline link"
+import json, sys
+payload = json.loads(sys.argv[1])
+assert payload["entities"] == [
+    {"type": "bold", "offset": 0, "length": 8},
+    {"type": "code", "offset": payload["text"].index("x<y"), "length": 3},
+    {"type": "text_link", "offset": payload["text"].index("the PR"), "length": 6, "url": "https://example.test/pull/1"},
+], payload["entities"]
+PY
+  pass "fm-telegram: send renders formatting as explicit Telegram entities"
 }
 
 test_send_plain_chunks_are_bounded() {
@@ -308,6 +317,8 @@ for r in rows:
     assert len(payload["text"]) <= 4096, len(payload["text"])
     assert "parse_mode" not in payload
     assert "**" not in payload["text"]
+    assert payload["entities"], "long emphasis must remain formatted in each chunk"
+    assert payload["entities"][0]["type"] == "bold"
 PY
   pass "fm-telegram: plain chunks stay bounded"
 }
@@ -458,7 +469,7 @@ test_poll_chat_filter_and_wake
 test_poll_counts_dropped_updates
 test_poll_dedupes_on_second_run
 test_send_splits_at_line_boundary
-test_send_formats_plain_readable_text
+test_send_formats_with_entities
 test_send_plain_chunks_are_bounded
 test_send_never_posts_blank_chunks
 test_send_reports_delivered
