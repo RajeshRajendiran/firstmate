@@ -49,7 +49,7 @@ def _api_url(prefix, token, method):
 
 
 _INLINE_MARKUP = re.compile(r"\*\*(.+?)\*\*|`(.+?)`")
-_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?|tg)://(?:[^\s()]|\([^\s()]*\))+)\)")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)")
 
 
 def _utf16_len(text):
