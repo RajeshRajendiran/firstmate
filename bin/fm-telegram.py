@@ -49,57 +49,106 @@ def _api_url(prefix, token, method):
 
 
 _INLINE_MARKUP = re.compile(r"\*\*(.+?)\*\*|`(.+?)`")
-_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)")
-_LEAD_BOLD = re.compile(r"^(\s*)\*\*(.+?)\*\*")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?|tg)://(?:[^\s()]|\([^\s()]*\))+)\)")
 
 
-def _link_text(match):
-    label, url = match.group(1), match.group(2)
-    return url if label == url else f"{label} ({url})"
+def _utf16_len(text):
+    return len(text.encode("utf-16-le")) // 2
 
 
-def _readable_telegram_text(text):
-    """Make replies scan cleanly in Telegram's plain-text renderer.
+def _render_telegram_text(text):
+    """Render the reply Markdown subset as explicit Telegram message entities.
 
-    Replies are sent without a parse mode.  The author's line and blank-line
-    structure is kept, sentences stay whole, Markdown links become "label (url)",
-    a leading **bold** lead-in gets a marker so the item needing the captain
-    stands out, and remaining ** and ` decoration is removed.
+    Telegram's sendMessage accepts entities instead of parse_mode. Keeping the
+    visible text separate from formatting means characters such as ``<``, ``&``
+    and MarkdownV2 punctuation remain literal without escaping.
     """
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
-    text = _MARKDOWN_LINK.sub(_link_text, text)
     lines = []
     for source_line in text.split("\n"):
-        line = _LEAD_BOLD.sub(lambda m: f"{m.group(1)}\u25b6 {m.group(2)}", source_line.rstrip())
-        line = _INLINE_MARKUP.sub(lambda m: m.group(1) or m.group(2), line)
+        line = source_line.rstrip()
         if not line.strip() and (not lines or not lines[-1]):
             continue
-        lines.append(line.rstrip())
-    return "\n".join(lines).strip()
+        lines.append(line)
+    normalized = "\n".join(lines).strip()
+    if not normalized:
+        return "", []
+
+    rendered = []
+    entities = []
+    for line_number, line in enumerate(normalized.split("\n")):
+        if line_number:
+            rendered.append("\n")
+        cursor = 0
+        while cursor < len(line):
+            candidates = []
+            link = _MARKDOWN_LINK.search(line, cursor)
+            if link:
+                candidates.append((link.start(), link.end(), "link", link))
+            markup = _INLINE_MARKUP.search(line, cursor)
+            if markup:
+                candidates.append((markup.start(), markup.end(), "markup", markup))
+            if not candidates:
+                rendered.append(line[cursor:])
+                break
+            start, end, kind, match = min(candidates, key=lambda item: item[0])
+            rendered.append(line[cursor:start])
+            entity_start = len("".join(rendered))
+            if kind == "link":
+                label, url = match.group(1), match.group(2)
+                rendered.append(label)
+                entities.append({"type": "text_link", "start": entity_start, "end": entity_start + len(label), "url": url})
+            elif match.group(1) is not None:
+                content = match.group(1)
+                rendered.append(content)
+                entities.append({"type": "bold", "start": entity_start, "end": entity_start + len(content)})
+            else:
+                content = match.group(2)
+                rendered.append(content)
+                entities.append({"type": "code", "start": entity_start, "end": entity_start + len(content)})
+            cursor = end
+
+    return "".join(rendered), entities
 
 
 def _split_telegram_text(text, max_len=4096):
-    """Split readable plain text into chunks no larger than max_len."""
-    text = _readable_telegram_text(text)
-    if not text:
-        return [""]
+    """Render and split replies, preserving entities in every API chunk."""
+    rendered_text, entities = _render_telegram_text(text)
+    if not rendered_text:
+        return [{"text": "", "entities": []}]
     chunks = []
-    current = ""
-    for line in text.split("\n"):
-        candidate = f"{current}\n{line}" if current else line
-        if len(candidate) <= max_len:
-            current = candidate
-            continue
-        if current:
-            chunks.append(current)
-            current = ""
-        while len(line) > max_len:
-            chunks.append(line[:max_len])
-            line = line[max_len:]
-        current = line
-    if current:
-        chunks.append(current)
-    return [chunk for chunk in chunks if chunk.strip()] or [""]
+    start = 0
+    while start < len(rendered_text):
+        end = min(start + max_len, len(rendered_text))
+        if end < len(rendered_text):
+            line_end = rendered_text.rfind("\n", start, end + 1)
+            if line_end > start:
+                end = line_end
+            crossing = [entity for entity in entities if entity["start"] < end < entity["end"]]
+            if crossing and crossing[0]["start"] > start:
+                end = crossing[0]["start"]
+            if end == start:
+                end = min(start + max_len, len(rendered_text))
+        chunk_entities = []
+        for entity in entities:
+            overlap_start = max(start, entity["start"])
+            overlap_end = min(end, entity["end"])
+            if overlap_start < overlap_end:
+                chunk_entity = {
+                    "type": entity["type"],
+                    "offset": _utf16_len(rendered_text[start:overlap_start]),
+                    "length": _utf16_len(rendered_text[overlap_start:overlap_end]),
+                }
+                if "url" in entity:
+                    chunk_entity["url"] = entity["url"]
+                chunk_entities.append(chunk_entity)
+        chunk = rendered_text[start:end]
+        if chunk.strip():
+            chunks.append({"text": chunk, "entities": chunk_entities})
+        start = end
+        if start < len(rendered_text) and rendered_text[start] == "\n":
+            start += 1
+    return chunks or [{"text": "", "entities": []}]
 
 
 def _classify_send(body, rc, code):
@@ -205,7 +254,9 @@ def cmd_send():
     for i, chunk in enumerate(chunks, start=1):
         if i > 1:
             time.sleep(rate)
-        payload = {"chat_id": chat_id, "text": chunk}
+        payload = {"chat_id": chat_id, "text": chunk["text"]}
+        if chunk["entities"]:
+            payload["entities"] = chunk["entities"]
         body, rc, code = _run_curl(url, method="POST", json_payload=payload, timeout=timeout, include_code=True)
         status = _classify_send(body, rc, code)
         if status["reason"]:

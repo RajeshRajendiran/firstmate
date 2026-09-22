@@ -678,7 +678,7 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 The Telegram plane (`bin/fm-telegram.sh`) receives private messages from the captain's Telegram chat and sends replies to the same chat.
 Its `poll` command long-polls the Bot API `getUpdates` endpoint with a stored offset, keeps only messages whose `chat.id` equals `FM_TELEGRAM_CAPTAIN_CHAT_ID`, drops every other message silently, stashes each accepted message under `state/telegram/<update_id>.json`, and appends exactly one `check: telegram <update_id>` wake per accepted message.
 It advances the durable offset only after the record and wake are durable, and bounds wakes per run with `FM_TELEGRAM_POLL_MAX_WAKES`.
-`send` renders replies as readable plain text that keeps the source line structure, marks a leading bold lead-in, and writes Markdown links as "label (url)", splits them at 4,096 characters on line boundaries, respects the one-message-per-second limit, reports `delivered`, `ambiguous`, or `not-delivered` for each chunk, and stops at the first chunk that is not delivered and exits nonzero.
+`send` keeps replies readable by preserving the source line structure and sending supported bold, code, and Markdown links as Telegram message entities instead of a `parse_mode`, so special characters remain literal, splits them at 4,096 characters on line boundaries, respects the one-message-per-second limit, reports `delivered`, `ambiguous`, or `not-delivered` for each chunk, and stops at the first chunk that is not delivered and exits nonzero.
 `status` prints configuration presence and the last offset with no network call.
 
 `bin/fm-telegram-check.sh` provides the unattended delivery paths.

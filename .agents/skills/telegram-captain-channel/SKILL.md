@@ -28,7 +28,7 @@ The Telegram plane already stashed the message at `state/telegram/<update_id>.js
    - Merges, destructive actions, irreversible actions, and security-sensitive asks must be answered with a clear "confirm in the terminal" message and must not be executed from Telegram.
 4. Formulate the answer in plain language under the section 9 outcome rules.
    Keep the reply scannable on a phone: short lines, compact lists, blank lines only between groups, no paragraph walls or dummy test text, and bare URLs on their own lines.
-   The send command turns a leading `**bold**` into a marker and removes other `**bold**` and `` `code` `` decorations before using Telegram plain text, so do not rely on rich formatting for meaning.
+   The send command uses Telegram message entities for `**bold**`, `` `code` ``, and Markdown links, so special characters stay literal and formatting remains readable.
    Keep replies under 4,096 characters because Telegram splits messages at that boundary, but do not truncate useful detail: the chat is private, so real detail is appropriate.
 5. Send the reply with `bin/fm-telegram.sh send <text>` from the same home.
    If the answer is long, write it to a file and use `bin/fm-telegram.sh send - < file`.
