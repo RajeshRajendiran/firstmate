@@ -46,7 +46,7 @@ A genuinely no-op heartbeat is absorbed in bash and never reaches Pi, and every 
 A broken branch still falls back to today's wake-to-main path in both postures, and the legacy `state/.afk` daemon flag means nothing on Pi.
 While the away-posture record `state/.afk-contract` exists the branch takes every actionable row, no processing turn opens on the parked main, and main's standing authority relocates to the branch through the guarded scripts, each keeping its own gate; [docs/pi-supervision-branch.md](pi-supervision-branch.md#postures) owns that posture.
 While attended the branch's role stays bounded exactly as the captain-approved architecture set it: it cannot merge a PR, land local work, freshly spawn, or answer a decision, and every existing captain gate remains unchanged in either posture.
-Homes on any other primary harness never load this feature and are entirely unaffected.
+Homes on other primary harnesses do not load the Pi branch extension; shared per-task lease behavior is owned by `bin/fm-lease-lib.sh`.
 `AGENTS.md`'s `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
 While attended, a captain-facing (verdict `captain`) branch outcome persists as one exact, sequence-keyed visible transcript entry and then opens one sequence-keyed processing turn on main, which stays open until main acknowledges that sequence through its `fm_branch_processed` tool; while away, the entry persists but processing waits until the record is archived.
 The branch prompt's "Verdict: routine or captain" section owns the distinction between captain-facing, unsolicited routine, and unchanged-review outcomes.
@@ -383,6 +383,39 @@ Any other value, or an unreadable file, refuses every spawn from that home, whic
 `bin/fm-spawn.sh` reads the file on every spawn and relaunch, so a change takes effect at the next launch without a restart.
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the verified shape of both launches and which once-per-machine dialog each one can meet.
+
+## Worker account pin (config/claude-account, config/pi-account)
+
+A home that mixes accounts for one runner, such as a work login and a personal one, can pin the account its own Claude and Pi workers launch on.
+The pin is opt-in: with neither file, every launch is unchanged, and Claude workers keep receiving firstmate's own `CLAUDE_CONFIG_DIR` when it is set.
+Both files are local and gitignored.
+
+| Runner | File | Variable the launch receives | `ordinary` means |
+| --- | --- | --- | --- |
+| `claude` | `config/claude-account` | `CLAUDE_CONFIG_DIR` | the variable unset, so Claude uses its default login |
+| `pi`, `pi-signed` | `config/pi-account` | `PI_CODING_AGENT_DIR` | `~/.pi/agent` |
+
+`config/claude-account` holds one line: `ordinary`, or the absolute path of an existing Claude config directory.
+`config/pi-account` holds that same root on line 1 and, on line 2, the providers this home may spend, separated by spaces, for example `openai-codex anthropic`.
+A final newline is optional; any other line, a relative path, or a control character such as a CR refuses.
+For Claude, `ordinary` unsets `CLAUDE_CONFIG_DIR` rather than pointing it at `~/.claude`, because Claude reads `$CLAUDE_CONFIG_DIR/.claude.json` and keys its macOS Keychain entry to any directory that is set ([authentication, "Credential management"](https://code.claude.com/docs/en/authentication#credential-management)).
+A Pi root can hold several provider logins at once, so the root alone does not say which account a launch spends.
+A pinned Pi launch therefore needs `--model <provider>/<id>` naming a declared provider, and Firstmate also passes `--provider <that provider>` so Pi cannot resolve the model under another signed-in provider.
+An unqualified model, an undeclared provider, or a raw Pi launch command, which cannot receive that flag, refuses; Firstmate never guesses a provider.
+
+When a file is present, every launch of that runner from this home uses it: ships, scouts, local secondmate agents, raw Claude launch commands, and relaunches.
+A raw Claude launch command whose leading assignments set `CLAUDE_CONFIG_DIR` or one of the credentials a pinned launch unsets, such as `ANTHROPIC_API_KEY`, would override the pin, so it refuses and names the variable; remove the assignment from the raw command, or change or remove `config/claude-account`.
+Before any worker endpoint, local copy, or task record exists, and before a relaunch stops the running worker, Firstmate asks the runner itself whether the pinned account is signed in: `claude auth status` for Claude, and `pi auth check --provider <provider> --json --no-refresh` for Pi, falling back to `pi --list-models <provider>` for a provider an extension registers.
+The check runs with only `HOME`, `PATH`, `TMPDIR`, `USER`, `LOGNAME`, and the pinned root in its environment, so a credential variable in firstmate's own environment cannot answer for an empty root.
+A pinned Claude launch also unsets the environment credentials Claude ranks above a stored login, such as `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, and the Bedrock and Vertex switches ([authentication precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)).
+Pi ranks a root's stored logins above environment variables, so a pinned Pi launch unsets nothing.
+A home that authenticates Claude through environment credentials on purpose should leave the pin absent.
+
+A malformed file, a root that is not a readable directory, or a signed-out account refuses the launch and names the file to fix; Firstmate never falls back to the ambient account and never changes a global login or copies a credential.
+The spawn prints the pin as `account=` (plus `account_provider=` for Pi) and records the same fields in the task record, so the session-start digest shows which account each worker launched on.
+Pins are not inherited into secondmate homes: a local secondmate agent launches on the launching home's pin, while the secondmate's own workers read the secondmate home's files.
+A remote secondmate is launched on its host from its own home's configuration, so create the file in that remote home.
+[`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 
 ## Lavish server address (config/lavish-axi-host)
 
