@@ -191,6 +191,24 @@ test_successful_poll_with_new_message_emits_one_wake_line() {
   pass "fm-telegram-check: a successful poll that surfaces a message emits one wake line"
 }
 
+test_check_runs_the_background_responder() {
+  local home out
+  home=$(make_home background-responder)
+  write_env "$home"
+  make_fake_curl "$FAKEBIN"
+  FM_TELEGRAM_FAKE_RESPONSE='{"ok":true,"result":['
+  FM_TELEGRAM_FAKE_RESPONSE+='{"update_id":8,"message":{"chat":{"id":12345},"message_id":51,"date":1011,"from":{"id":12345,"username":"captain"},"text":"ping"}}'
+  FM_TELEGRAM_FAKE_RESPONSE+=']}'
+  export FM_TELEGRAM_FAKE_RESPONSE FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}' \
+    FM_TELEGRAM_CURL_LOG="$home/curl.log" FM_TELEGRAM_POLL_TIMEOUT=2 FM_TELEGRAM_SEND_RATE_LIMIT=0
+  out="$home/out.txt"
+  run_check "$home" "$out" "$CHECK"
+  assert_present "$home/state/telegram/handled/8.json" "the standing check acknowledges the safe message in the background"
+  assert_contains "$(cat "$home/state/telegram/responses/8.json")" '"status":"delivered"' "the background result is durable"
+  assert_contains "$(cat "$home/curl.log")" "sendMessage" "the background responder sends without a main turn"
+  pass "fm-telegram-check: polling invokes the acknowledgement-only background responder"
+}
+
 test_failure_is_reported_once_until_it_changes() {
   local home out
   home=$(make_home failure)
@@ -308,6 +326,7 @@ test_arm_writes_and_binds_the_check_and_disarm_removes_it
 test_arm_refuses_while_listen_is_registered
 test_listen_arm_refuses_while_standing_check_is_armed
 test_successful_poll_with_new_message_emits_one_wake_line
+test_check_runs_the_background_responder
 test_failure_is_reported_once_until_it_changes
 test_unconfigured_home_is_reported_once
 test_slow_poll_times_out_and_is_reported

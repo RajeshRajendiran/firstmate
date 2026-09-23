@@ -679,12 +679,14 @@ The Telegram plane (`bin/fm-telegram.sh`) receives private messages from the cap
 Its `poll` command long-polls the Bot API `getUpdates` endpoint with a stored offset, keeps only messages whose `chat.id` equals `FM_TELEGRAM_CAPTAIN_CHAT_ID`, drops every other message silently, stashes each accepted message under `state/telegram/<update_id>.json`, and appends exactly one `check: telegram <update_id>` wake per accepted message.
 It advances the durable offset only after the record and wake are durable, and bounds wakes per run with `FM_TELEGRAM_POLL_MAX_WAKES`.
 `send` keeps replies readable by preserving the source line structure and sending supported bold, code, and Markdown links as Telegram message entities instead of a `parse_mode`, so special characters remain literal, splits them at 4,096 characters on line boundaries, respects the one-message-per-second limit, reports `delivered`, `ambiguous`, or `not-delivered` for each chunk, and stops at the first chunk that is not delivered and exits nonzero.
+`respond` is an acknowledgement-only background path that sends one compact safe acknowledgement or a terminal-confirmation refusal for each pending message, never starts work, and records every attempt before moving a delivered message to `state/telegram/handled/`.
 `status` prints configuration presence and the last offset with no network call.
 
 `bin/fm-telegram-check.sh` provides the unattended delivery paths.
 `arm` writes `state/telegram.check.sh` and registers it with the watcher's slow-check cadence (`FM_CHECK_INTERVAL`), so `poll` runs on its own and new messages still surface as `check: telegram <update_id>` wakes.
 `disarm` removes the standing check.
-`listen-arm` registers `fm-telegram.sh listen` as a process-event source for near-instant delivery; the loop long-polls Telegram directly and wakes firstmate within seconds.
+`listen-arm` registers `fm-telegram.sh listen` as a process-event source for near-instant delivery; the loop long-polls Telegram directly, runs the acknowledgement-only responder, and wakes firstmate within seconds.
+The standing `check` path likewise runs the responder after polling, so the captain receives a safe acknowledgement without waiting for the main firstmate turn.
 `listen-disarm` retires the process-event source.
 Only one of the standing check or the listen source may be armed for the same home at a time, because Telegram delivers updates to one long-polling consumer per bot token.
 `FM_TELEGRAM_CHECK_BUDGET` (default 15, valid 5..25) bounds one standing poll and is cut down to fit `FM_CHECK_TIMEOUT`.
@@ -704,6 +706,7 @@ FM_TELEGRAM_CAPTAIN_CHAT_ID=  # the captain's chat id
 
 The state files are written only by `bin/fm-telegram.sh`; the AGENTS.md `state/` layout owns their inventory.
 A handled Telegram message is acknowledged by moving its record from `state/telegram/<update_id>.json` to `state/telegram/handled/<update_id>.json`.
+Background response attempts are audited as private JSON records under `state/telegram/responses/`; a `sending` or uncertain result is never retried automatically, preventing duplicate replies while leaving the durable wake for firstmate.
 
 ## Relay (.env)
 

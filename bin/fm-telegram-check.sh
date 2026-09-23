@@ -221,6 +221,12 @@ action_check() {
       line=
     fi
   fi
+  # The background responder is acknowledgement-only and runs after polling,
+  # so the main firstmate does not have to wait for a supervision turn before
+  # the captain receives a durable answer.
+  if [ -x "$TELEGRAM_BIN" ]; then
+    FM_HOME="$FM_HOME" "$TELEGRAM_BIN" respond >/dev/null 2>&1 || :
+  fi
   record_read
   if poll_has_publication_evidence "${rc:-0}" "${out:-}" "$woken_before"; then
     queued=1
