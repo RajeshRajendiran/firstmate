@@ -11,7 +11,9 @@
 #   fm-telegram-check.sh --help
 #
 # `check` runs the Telegram poll from this home on the watcher's normal
-# FM_CHECK_INTERVAL cadence. It composes with the existing watcher state-check
+# FM_CHECK_INTERVAL cadence, then runs the acknowledgement-only `respond`
+# path so the captain gets a durable acknowledgement without waiting for a
+# main firstmate turn. It composes with the existing watcher state-check
 # contract: a printed line becomes a `check:` wake so firstmate can drain the
 # durable `check: telegram <update_id>` rows the poll already queued.
 #
@@ -38,10 +40,12 @@
 # timeout, fail-closed diagnostics, a queued telegram: check key, or growth of
 # state/.telegram-woken. Same-line silence is only for a proven no-op.
 #
-# The poll must finish inside the watcher's per-check bound
-# (FM_CHECK_TIMEOUT, default 30). The internal budget
+# Both the poll and the responder must finish inside the watcher's per-check
+# bound (FM_CHECK_TIMEOUT, default 30). The poll's internal budget
 # FM_TELEGRAM_CHECK_BUDGET (default 15, valid 5..25) is cut down to whatever
-# fits inside that bound.
+# fits inside that bound, and the responder gets whatever is left of the
+# same bound so a backlog of pending records cannot run the check past its
+# timeout.
 set -u
 export LC_ALL=C
 
