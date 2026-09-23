@@ -18,6 +18,13 @@
 #   listen               Run poll in a tight loop for near-instant delivery.
 #                        The loop is meant to be supervised as a process-event
 #                        source; do not run two consumers for the same bot.
+#   respond              Send one safe acknowledgement for each pending record,
+#                        a terminal-confirmation refusal, or a queued receipt.
+#                        Only a safe acknowledgement or a terminal-confirmation
+#                        refusal is a complete answer and acknowledges the
+#                        record; a queued receipt leaves the record durable so
+#                        firstmate still answers it for real. Every attempt is
+#                        recorded.
 #   send <text | ->      Send one or more messages to the captain chat id,
 #                        splitting at 4,096 characters on line boundaries
 #                        and respecting the one-message-per-second limit. Reports
@@ -41,6 +48,9 @@
 # FM_HOME falls back to the repo root when unset. The engine is
 # bin/fm-telegram.py; see docs/configuration.md "Telegram plane" for the
 # schema and state-file contract.
+# `respond` is deliberately an acknowledgement-only path. It never starts
+# work or changes project state; a request requiring firstmate judgment only
+# gets a queued receipt and still needs a real answer in the terminal.
 
 set -euo pipefail
 
@@ -135,6 +145,8 @@ OFFSET_FILE="$STATE_DIR/.telegram-offset"
 WOKEN_FILE="$STATE_DIR/.telegram-woken"
 STATS_FILE="$STATE_DIR/.telegram-stats"
 LOCK_FILE="$STATE_DIR/.telegram-offset.lock"
+RESPONSES_DIR="$STATE_DIR/telegram/responses"
+RESPONDER_LOCK="$STATE_DIR/.telegram-responder.lock"
 
 export FM_TELEGRAM_BOT_TOKEN FM_TELEGRAM_CAPTAIN_CHAT_ID
 export FM_TELEGRAM_API_URL_PREFIX="$API_PREFIX"
@@ -146,6 +158,7 @@ usage() {
   cat <<'EOF'
 fm-telegram.sh poll
 fm-telegram.sh listen
+fm-telegram.sh respond
 fm-telegram.sh send <text | ->
 fm-telegram.sh status
 EOF
@@ -305,6 +318,131 @@ telegram_run_send() {
   "$PY" "$PY_BIN" send "$text_file"
 }
 
+# Write one private JSON response record. A `sending` record is created before
+# contacting Telegram, so a crash after an accepted request cannot cause a
+# retry that might duplicate the reply.
+telegram_response_write() {
+  local path=$1 update_id=$2 status=$3 kind=$4 reply=$5 reason=$6 tmp
+  tmp="$(mktemp "$path.tmp.XXXXXX")" || return 1
+  chmod 0600 "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+  if ! "$PY" - "$tmp" "$update_id" "$status" "$kind" "$reply" "$reason" <<'PY'
+import json
+import sys
+import time
+
+path, update_id, status, kind, reply, reason = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(
+        {
+            "schema": "fm-telegram-response-v1",
+            "update_id": int(update_id),
+            "status": status,
+            "kind": kind,
+            "reply": reply,
+            "reason": reason,
+            "at": int(time.time()),
+        },
+        fh,
+        separators=(",", ":"),
+    )
+    fh.write("\n")
+PY
+  then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  mv -f -- "$tmp" "$path" || { rm -f -- "$tmp"; return 1; }
+}
+
+# Extract one field from a stashed message without evaluating its text.
+telegram_record_field() {
+  local path=$1 field=$2
+  "$PY" - "$path" "$field" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    value = json.load(fh).get(sys.argv[2])
+if value is None:
+    raise SystemExit(1)
+print(value, end="")
+PY
+}
+
+telegram_response_for_text() {
+  local text=$1 normalized kind reply is_question=0
+  normalized=$(printf '%s' "$text" | tr '\n' ' ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
+  case "$normalized" in
+    *\?) is_question=1 ;;
+  esac
+  if [ "$is_question" -eq 0 ] && printf '%s' "$normalized" | grep -Eq "^(what|what's|who|who's|when|where|why|how|which|is|are|was|were)([[:space:]]|\$)"; then
+    is_question=1
+  fi
+  if printf '%s' "$normalized" | grep -Eq '^(ping|hello|hi|hey|help|status|/status|are you there|what is happening|what.s up)[[:space:]]*$'; then
+    # shellcheck disable=SC2100 # string label, not arithmetic; ShellCheck's
+    # cross-file dataflow conflates this with the unrelated "safe" var in
+    # fm-classify-lib.sh (pulled in via the fm-wake-lib.sh source chain).
+    kind=safe-ack
+    reply='Received. Telegram is connected, and firstmate has your message. Firstmate will answer from the current records in the terminal.'
+  elif [ "$is_question" -eq 0 ] && printf '%s' "$normalized" | grep -Eq '(^|[[:space:]])(merge|delete|remove|destroy|drop|reset|revoke|rotate|deploy|release|publish|force|kill|discard|purge|wipe|overwrite|shutdown|password|secret|token|credential|security|irreversible)([[:space:]]|$)'; then
+    kind=terminal-confirmation
+    reply='I received this request, but merges, destructive, irreversible, and security-sensitive actions require terminal confirmation. Please confirm in the terminal before proceeding. Firstmate has been notified there.'
+  else
+    kind=queued-ack
+    reply='Received. Firstmate has been notified and will handle this in the terminal.'
+  fi
+  printf '%s\n%s\n' "$kind" "$reply"
+}
+
+# Respond to each pending inbound message at most once. This is intentionally
+# acknowledgement-only: the durable wake remains the source of truth for any
+# work or answer that needs firstmate judgment.
+telegram_respond() {
+  local record update_id text response kind reply send_out send_rc verdict
+  local -a response_parts
+  mkdir -p "$RESPONSES_DIR" "$STATE_DIR/telegram/handled" || return 1
+  chmod 0700 "$RESPONSES_DIR" "$STATE_DIR/telegram/handled" 2>/dev/null || return 1
+  # shellcheck source=bin/fm-wake-lib.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  fm_lock_acquire_wait "$RESPONDER_LOCK" || return 1
+  for record in "$STATE_DIR"/telegram/[0-9]*.json; do
+    [ -f "$record" ] || continue
+    update_id=${record##*/}
+    update_id=${update_id%.json}
+    case "$update_id" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    response="$RESPONSES_DIR/$update_id.json"
+    [ -e "$response" ] && continue
+    if ! text=$(telegram_record_field "$record" text 2>/dev/null); then
+      telegram_response_write "$response" "$update_id" needs-main malformed '' 'invalid Telegram record' || true
+      continue
+    fi
+    mapfile -t response_parts < <(telegram_response_for_text "$text")
+    kind=${response_parts[0]:-queued-ack}
+    reply=${response_parts[1]:-Received. Firstmate has been notified and will handle this in the terminal.}
+    telegram_response_write "$response" "$update_id" sending "$kind" "$reply" '' || continue
+    send_out=''
+    send_rc=0
+    send_out=$(telegram_send send "$reply" 2>&1) || send_rc=$?
+    verdict=$(printf '%s\n' "$send_out" | sed -n 's/^\(delivered\|not-delivered\|ambiguous\):.*/\1/p' | tail -n 1)
+    [ -n "$verdict" ] || verdict=ambiguous
+    telegram_response_write "$response" "$update_id" "$verdict" "$kind" "$reply" "$send_out" || true
+    if [ "$verdict" = delivered ]; then
+      # queued-ack is only a receipt, not an answer, so the source record stays
+      # pending; firstmate still has to handle it for real and then acknowledge it.
+      if [ "$kind" != queued-ack ]; then
+        mv -f -- "$record" "$STATE_DIR/telegram/handled/$update_id.json" 2>/dev/null || true
+      fi
+      printf 'fm-telegram: responded for %s\n' "$update_id"
+    elif [ "$send_rc" -ne 0 ]; then
+      printf 'fm-telegram: response for %s was not delivered\n' "$update_id" >&2
+    fi
+  done
+  fm_lock_release "$RESPONDER_LOCK"
+}
+
 telegram_poll() {
   local quiet=${1:-0}
   local offset new_offset accepted=0 dropped=0 woke=0
@@ -433,6 +571,9 @@ telegram_listen() {
   local quiet=1 failures=0 max_failures=5 delay=5 max_delay=30
   while :; do
     if telegram_poll "$quiet"; then
+      # Keep the listener responsive while the main firstmate is busy. The
+      # responder only sends a durable acknowledgement and never starts work.
+      telegram_respond >/dev/null 2>&1 || true
       failures=0
       delay=5
       continue
@@ -492,6 +633,9 @@ case "${1:-}" in
     ;;
   listen)
     telegram_listen
+    ;;
+  respond)
+    telegram_respond
     ;;
   send)
     telegram_send "$@"

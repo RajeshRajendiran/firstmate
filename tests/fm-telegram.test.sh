@@ -461,6 +461,49 @@ test_no_secret_leaked_to_status() {
   pass "fm-telegram: status never prints the bot token"
 }
 
+test_background_responder_is_prompt_idempotent_and_safe() {
+  local fakebin home out count
+  home=$(make_tg_home "$TMP_ROOT/responder-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT/responder-bin")
+  make_fake_curl "$fakebin"
+  mkdir -p "$home/state/telegram"
+  printf '%s\n' '{"update_id":30,"chat_id":12345,"message_id":70,"date":1030,"from":"captain","text":"ping"}' > "$home/state/telegram/30.json"
+  export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/responder.log" FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}'
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" respond 2>&1)
+  assert_contains "$out" "responded for 30" "safe messages receive a prompt background acknowledgement"
+  assert_present "$home/state/telegram/handled/30.json" "delivered safe messages are acknowledged"
+  assert_contains "$(cat "$home/state/telegram/responses/30.json")" '"status":"delivered"' "the response result is durable"
+  count=$(wc -l < "$TMP_ROOT/responder.log" | tr -d '[:space:]')
+  assert_equals "1" "$count" "the first response sends exactly once"
+
+  out=$(FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" respond 2>&1)
+  assert_equals "1" "$(wc -l < "$TMP_ROOT/responder.log" | tr -d '[:space:]')" \
+    "a repeated responder run does not duplicate a delivered reply"
+  pass "fm-telegram: background responder handles a safe message promptly and idempotently"
+}
+
+test_background_responder_refuses_terminal_authority() {
+  local fakebin home body
+  home=$(make_tg_home "$TMP_ROOT/responder-refusal-home")
+  fakebin=$(fm_fakebin "$TMP_ROOT/responder-refusal-bin")
+  make_fake_curl "$fakebin"
+  mkdir -p "$home/state/telegram"
+  printf '%s\n' '{"update_id":31,"chat_id":12345,"message_id":71,"date":1031,"from":"captain","text":"merge the PR"}' > "$home/state/telegram/31.json"
+  export FM_TELEGRAM_CURL_LOG="$TMP_ROOT/responder-refusal.log" FM_TELEGRAM_SEND_RESPONSE='{"ok":true,"result":{"message_id":1}}'
+  FM_TELEGRAM_BOT_TOKEN="$TG_TOKEN" FM_TELEGRAM_CAPTAIN_CHAT_ID="$TG_CHAT" \
+    FM_HOME="$home" PATH="$fakebin:$PATH" FM_TELEGRAM_SEND_RATE_LIMIT=0 \
+    "$TELEGRAM" respond >/dev/null 2>&1
+  body=$(cut -f3 "$TMP_ROOT/responder-refusal.log")
+  assert_contains "$body" "confirm in the terminal" "terminal-authority requests receive a clear refusal"
+  assert_contains "$(cat "$home/state/telegram/responses/31.json")" '"kind":"terminal-confirmation"' "the refusal classification is audited"
+  assert_present "$home/state/telegram/handled/31.json" "the refusal is acknowledged without executing the request"
+  pass "fm-telegram: background responder refuses terminal-only authority"
+}
+
 test_missing_secret_fails_cleanly
 test_listen_quiet_success_backoff_and_exit
 test_env_overrides_env_file
@@ -478,4 +521,6 @@ test_send_reports_ambiguous
 test_help_plumbing
 test_unknown_subcommand_prints_usage
 test_no_secret_leaked_to_status
+test_background_responder_is_prompt_idempotent_and_safe
+test_background_responder_refuses_terminal_authority
 test_stashed_record_carries_acknowledgement_fields
