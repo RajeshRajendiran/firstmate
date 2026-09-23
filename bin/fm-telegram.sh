@@ -379,6 +379,9 @@ telegram_response_for_text() {
     is_question=1
   fi
   if printf '%s' "$normalized" | grep -Eq '^(ping|hello|hi|hey|help|status|/status|are you there|what is happening|what.s up)[[:space:]]*$'; then
+    # shellcheck disable=SC2100 # string label, not arithmetic; ShellCheck's
+    # cross-file dataflow conflates this with the unrelated "safe" var in
+    # fm-classify-lib.sh (pulled in via the fm-wake-lib.sh source chain).
     kind=safe-ack
     reply='Received. Telegram is connected, and firstmate has your message. Firstmate will answer from the current records in the terminal.'
   elif [ "$is_question" -eq 0 ] && printf '%s' "$normalized" | grep -Eq '(^|[[:space:]])(merge|delete|remove|destroy|drop|reset|revoke|rotate|deploy|release|publish|force|kill|discard|purge|wipe|overwrite|shutdown|password|secret|token|credential|security|irreversible)([[:space:]]|$)'; then
