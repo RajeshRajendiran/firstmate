@@ -346,9 +346,12 @@ source_owner() {  # <source-id>
 
 # A replacement listener is started detached, so it claims the source shortly
 # after reconcile returns. Wait for that claim rather than reporting the race.
+# 100 * 0.1s stays well above reconcile's own confirm window (default 3s, see
+# fm_procevent_launch_confirm_seconds) so a launch that reconcile itself
+# proved live has room to show up here too under a loaded scheduler.
 await_source_owner() {  # <source-id>
   local owner i=0
-  while [ "$i" -lt 50 ]; do
+  while [ "$i" -lt 100 ]; do
     owner=$(source_owner "$1")
     [ "$owner" != live ] || { printf '%s\n' "$owner"; return 0; }
     sleep 0.1
