@@ -174,7 +174,17 @@ record_pi_busy() {  # <state-dir> <id>
     --source pi-ext --event agent-start
 }
 
-reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+# Stop an owned watcher. TERM must end it through its EXIT cleanup, so one still
+# alive after the file's standard 100-tick budget fails the case here, with the
+# process evidence wait_for_exit prints, instead of an unbounded wait hanging
+# the whole suite until the CI job timeout.
+reap() {
+  local rc
+  kill "$1" 2>/dev/null || true
+  wait_for_exit "$1" 100
+  rc=$?
+  [ "$rc" -ne 124 ] || fail "watcher pid $1 did not exit within 10s of TERM"
+}
 
 # --- pure classifier predicates (fm-classify-lib.sh) ------------------------
 
@@ -1605,6 +1615,74 @@ test_self_announced_close_after_open_decisions_fold_does_not_rewake() {
   grep -F "signal: $status_file" "$out" >/dev/null \
     || fail "the later worker line did not surface as a signal"
   pass "a close after OPEN DECISIONS fold never wakes its own home, and the next real note still does"
+}
+
+# Any actor's drain folds OPEN DECISIONS, including a Pi branch drain, so a
+# fold is no proof the watcher's owner saw the line. A fresh worker decision the
+# fold already read must still wake when this home appended nothing.
+test_folded_worker_decision_without_home_append_still_wakes() {
+  local dir state fakebin out status_file pid
+  dir=$(make_case folded-decision-wakes); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  status_file="$state/task.status"
+  printf 'working: building\n' > "$status_file"
+  prime_status_seen "$state" "$status_file" || fail "could not prime the announced baseline"
+  printf 'needs-decision [key=k3]: pick a region\n' >> "$status_file"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>"$dir/fold.err" \
+    || fail "the OPEN DECISIONS fold drain failed"
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · idle worker'
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a folded worker decision with no home append was swallowed"
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the folded worker decision did not surface as a signal: $(cat "$out")"
+  pass "a folded worker decision with no home append still wakes"
+}
+
+# Two distinct --resolve-key answers to decisions the watcher never classified
+# leave the marker alone, since a fold is no proof the watcher's owner saw them.
+# That costs one wake for the worker's decisions, not one per answer, because
+# both answers ride inside the same surfaced span; the watcher's own commit
+# then covers them, so the next cycle is quiet and the next real note still
+# wakes. The ledger's separate job - vouching for owned bytes the watcher has
+# NOT classified - is pinned at library level by
+# test_separate_self_announced_answers_after_fold_are_owned.
+test_separate_self_announced_answers_after_fold_wake_once() {
+  local dir state fakebin out status_file pid rc answer
+  dir=$(make_case multi-answer-fold); state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"
+  status_file="$state/task.status"
+  {
+    printf 'needs-decision [key=k1]: pick REST or RPC\n'
+    printf 'needs-decision [key=k2]: pick us-east or eu-west\n'
+  } > "$status_file"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>"$dir/fold.err" \
+    || fail "the OPEN DECISIONS fold drain failed"
+  for answer in 'resolved [key=k1]: answered: REST' 'resolved [key=k2]: answered: eu-west'; do
+    rc=0
+    FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1"; fm_wake_status_append_self_announced "$2" "$3" "$4"
+    ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" "$status_file" "$answer" || rc=$?
+    [ "$rc" -eq 1 ] || fail "an answer over unclassified worker decisions did not fail toward waking (rc=$rc)"
+  done
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · idle worker'
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the unclassified worker decisions were swallowed"
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the worker decisions did not surface as a signal: $(cat "$out")"
+  ack_stopped_cycle "$state" || fail "could not handle the worker decisions' wake"
+  : > "$out"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "the owned answers re-woke the watcher: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "the owned answers printed a wake reason: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "the owned answers enqueued another durable wake"; }
+  printf 'blocked: need staging credentials\n' >> "$status_file"
+  wait_for_exit "$pid" 100 || fail "a later worker line after two owned answers was swallowed"
+  grep -F "signal: $status_file" "$out" >/dev/null \
+    || fail "the later worker line did not surface as a signal"
+  pass "separate answers over unclassified decisions wake once, and the next real note still does"
 }
 
 test_self_announced_close_after_fold_still_surfaces_folded_worker_failure() {
@@ -4152,6 +4230,52 @@ test_wedge_escalation_resets_when_pane_becomes_active() {
   pass "a pane becoming active again resets the consecutive wedge-escalation counter"
 }
 
+# --- a stop request is honored mid-poll --------------------------------------
+# Every stopper (the arm's signal path, the away-mode daemon, reap above) waits
+# for the watcher to exit after one TERM, so TERM must end it through its EXIT
+# cleanup at any point of a poll. A TERM trap body cannot promise that: bash
+# defers it until the blocked command returns, and bash 5.2 can drop it outright
+# when it is pending as a command substitution is parsed, which left CI watchers
+# polling after reap until the job timed out. The pane capture here blocks on a
+# FIFO whose writer never writes, so only a TERM honored mid-poll stops the
+# watcher inside the bound; the released lock and acknowledgeable stop record
+# prove its cleanup still ran.
+test_term_stops_a_watcher_blocked_inside_a_poll() {
+  local dir state fakebin out fifo window sig pid holder i rc
+  dir=$(make_case term-blocked-poll); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; fifo="$dir/pane.fifo"; window="test:fm-blocked-capture"
+  mkfifo "$fifo"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/blocked.meta"
+  printf 'working: implementing\n' > "$state/blocked.status"
+  sig=$(seen_sig "$state/blocked.status"); printf '%s' "$sig" > "$state/.seen-blocked_status"
+  # Opening the write end waits for the capture to open the read end, and the
+  # holder then keeps it open without writing, so that capture blocks mid-poll.
+  ( exec 3> "$fifo"; : > "$dir/capture-blocked"; exec sleep 30 ) &
+  holder=$!
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$fifo" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  i=0
+  while [ ! -e "$dir/capture-blocked" ] && [ "$i" -lt 300 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ ! -e "$dir/capture-blocked" ] || ! is_live_non_zombie "$pid"; then
+    kill "$holder" 2>/dev/null || true; reap "$pid"
+    fail "the watcher never blocked inside its pane capture: $(cat "$out")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait_for_exit "$pid" 100
+  rc=$?
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$rc" -ne 124 ] || fail "TERM did not stop a watcher blocked inside a poll"
+  [ ! -e "$state/.watch.lock" ] || fail "a watcher stopped mid-poll kept its singleton lock, so its cleanup did not run"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the stop of a watcher blocked inside a poll"
+  pass "TERM stops a watcher blocked inside a poll and still runs its cleanup"
+}
+
 # --- busy pane duration bound: a completed-turn age gate on top of busy -----
 # 2026-07 hibit-agent-focus-nonsteal-r1 incident: a busy pane (herdr "working"
 # and/or the harness's rendered busy footer) is unconditional, unbounded proof
@@ -5721,8 +5845,7 @@ iso_utc_at() {  # <epoch>
 }
 
 write_away_record() {  # <state>
-  if ! FM_HOME="$(dirname "$1")" FM_STATE_OVERRIDE="$1" "$ROOT/bin/fm-afk-contract.sh" propose >/dev/null 2>&1 \
-    || ! FM_HOME="$(dirname "$1")" FM_STATE_OVERRIDE="$1" "$ROOT/bin/fm-afk-contract.sh" confirm >/dev/null 2>&1; then
+  if ! FM_HOME="$(dirname "$1")" FM_STATE_OVERRIDE="$1" "$ROOT/bin/fm-afk-contract.sh" enter >/dev/null 2>&1; then
     fail "could not write the away-posture record in $1"
   fi
 }
@@ -5985,6 +6108,8 @@ test_secondmate_status_note_surfaced_despite_busy_agent
 test_secondmate_buried_block_wakes_despite_busy_agent
 test_self_announced_close_does_not_rewake_but_next_note_does
 test_self_announced_close_after_open_decisions_fold_does_not_rewake
+test_folded_worker_decision_without_home_append_still_wakes
+test_separate_self_announced_answers_after_fold_wake_once
 test_self_announced_close_after_fold_still_surfaces_folded_worker_failure
 test_self_announced_close_after_fold_still_surfaces_folded_secondmate_lines
 test_actionable_signal_surfaced
@@ -6009,6 +6134,7 @@ test_live_and_unproven_endpoints_still_wedge_escalate
 test_gone_report_rearms_when_the_endpoint_comes_back
 test_second_death_after_a_same_window_relaunch_reports_in_full
 test_identical_dead_display_of_a_successor_still_reports
+test_term_stops_a_watcher_blocked_inside_a_poll
 test_busy_pane_below_turn_age_bound_is_absorbed
 test_busy_pane_stable_hash_escalates_past_turn_age_bound
 test_busy_pane_changing_hash_escalates_past_turn_age_bound

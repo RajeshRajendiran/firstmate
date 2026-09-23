@@ -36,6 +36,8 @@ make_case() {
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/home/data" "$case_dir/home/config" "$fakebin"
+  fm_git_init_commit "$case_dir/wt"
+  git -C "$case_dir/wt" update-ref refs/remotes/origin/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
   cp "$ROOT/.tasks.toml" "$case_dir/home/.tasks.toml"
   printf '%s\n' '## In flight' '' '## Queued' '' '## Done' \
     > "$case_dir/home/data/backlog.md"
@@ -52,9 +54,9 @@ make_case() {
     'base=main' > "$case_dir/github-outcome"
   : > "$case_dir/github-rules"
   : > "$case_dir/gh.log"
-  # No worktree/project on disk; fm-pr-check.sh tolerates a worktree it cannot
-  # stat and simply skips the pr_head lookup via `gh` in that case, so give it
-  # one that resolves for cases that want pr_head recorded.
+  # The worktree is a git copy whose HEAD is on a remote-tracking ref, as a
+  # pushed ship task's is, so fm-pr-check.sh's named-head gate accepts it when
+  # the forge supplies no head (GitLab). No project clone exists on disk.
   printf '%s\n' "$case_dir"
 }
 
@@ -155,6 +157,10 @@ case "${1:-} ${2:-}" in
         ;;
       *headRefOid*)
         cat "$FM_TEST_GH_HEAD"
+        exit 0
+        ;;
+      *isDraft*)
+        cat "$FM_TEST_GH_VIEW_JSON"
         exit 0
         ;;
     esac
@@ -424,9 +430,7 @@ write_away_record() {
   local case_dir=$1
   shift
   FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-afk-contract.sh" propose "$@" >/dev/null
-  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-afk-contract.sh" confirm >/dev/null
+    "$ROOT/bin/fm-afk-contract.sh" enter "$@" >/dev/null
 }
 
 test_verified_merge_records_pr_and_head() {
@@ -2404,6 +2408,40 @@ test_github_red_checks_refuse_and_allow_red_waives_named() {
   pass "fm-pr-merge refuses red GitHub checks and waives only a named --allow-red check"
 }
 
+# A draft cannot be merged, and neither can a pull request whose draft state the
+# forge did not report as a boolean; both refuse before any merge call.
+test_github_draft_or_unreadable_draft_state_refuses() {
+  local case_dir rc head label filter
+  head=dddddddddddddddddddddddddddddddddddddddd
+  for label in draft unreadable; do
+    case_dir=$(make_case "github-$label")
+    mkdir -p "$case_dir/wt"
+    add_gh_mocks "$case_dir" "$head"
+    case "$label" in
+      draft) filter='.isDraft = true' ;;
+      *) filter='del(.isDraft)' ;;
+    esac
+    jq -c "$filter" "$case_dir/github-view.json" > "$case_dir/github-view.tmp"
+    mv "$case_dir/github-view.tmp" "$case_dir/github-view.json"
+
+    set +e
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/82 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "github-$label: a pull request not read as non-draft must refuse"
+    assert_grep "the pull request is a draft" "$case_dir/stderr" \
+      "github-$label: the draft state was not named"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "github-$label: gh pr merge ran without a non-draft reading"
+    assert_no_grep 'declare a wait instead of done' "$case_dir/stderr" \
+      "github-$label: the arm-time draft refusal preempted the merge refusal"
+    grep -qxF 'pr=https://github.com/example/repo/pull/82' "$case_dir/state/task-x1.meta" \
+      || fail "github-$label: pr= was not recorded before the merge refusal"
+  done
+  pass "fm-pr-merge refuses a draft pull request and one with no boolean draft state"
+}
+
 # When the base branch advances, GitHub cancels a pull request's in-flight run
 # and re-triggers it, leaving the cancelled run in the rollup beside the passing
 # re-run while reporting the pull request itself CLEAN. The merge must follow the
@@ -3069,8 +3107,7 @@ SH
   add_gh_mocks "$case_dir" 2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c
   write_away_record "$case_dir" --words 'merge task-x1 when green'
   mutate=$(away_change_script "$case_dir" replace-at-merge <<'SH'
-"$CONTRACT" propose --words 'hold everything for my return'
-"$CONTRACT" confirm
+"$CONTRACT" enter --words 'hold everything for my return'
 SH
   )
   export FM_TEST_AWAY_MUTATE_AT_MERGE="$mutate"
@@ -3196,6 +3233,7 @@ test_untraversable_user_backend_config_directory_refuses_the_merge
 test_absent_user_backend_config_directory_and_backlog_still_merge
 test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
+test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
 test_check_runs_never_supersede_status_contexts
 test_current_failed_check_run_still_refuses
