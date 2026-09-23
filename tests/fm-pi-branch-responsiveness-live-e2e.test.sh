@@ -37,6 +37,12 @@ PI_VERSION=$(pi --version 2>/dev/null || printf 'unknown')
 TMUX=$(command -v tmux)
 SOCKET="fm-pi-branch-responsiveness-$$"
 SESSION=pi-branch-responsiveness
+# run_arm kills the previous arm's session between arms; since that session is
+# the only one on this private server, tmux's default exit-empty would let the
+# server exit right after that kill, and a new-session client that connects in
+# that window gets "server exited unexpectedly" instead of a fresh server.
+# Starting the server up front with exit-empty off keeps it alive across arms.
+"$TMUX" -L "$SOCKET" start-server \; set -s exit-empty off
 TMP_ROOT=$(fm_test_tmproot fm-pi-branch-responsiveness)
 LAB="$TMP_ROOT/lab"
 PROJECT="$LAB/project"
