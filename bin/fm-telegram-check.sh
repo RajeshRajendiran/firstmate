@@ -192,7 +192,7 @@ poll_has_publication_evidence() {
 }
 
 action_check() {
-  local out rc=0 line woken_before queued=0
+  local out rc=0 line woken_before queued=0 respond_budget
   mkdir -p "$STATE" || return 1
   if listen_is_registered; then
     # The listen source is the active consumer; the standing check would race
@@ -223,9 +223,12 @@ action_check() {
   fi
   # The background responder is acknowledgement-only and runs after polling,
   # so the main firstmate does not have to wait for a supervision turn before
-  # the captain receives a durable answer.
+  # the captain receives a durable answer. Bounded so a backlog of pending
+  # records cannot run the whole check past the watcher's per-check timeout.
   if [ -x "$TELEGRAM_BIN" ]; then
-    FM_HOME="$FM_HOME" "$TELEGRAM_BIN" respond >/dev/null 2>&1 || :
+    respond_budget=$((CHECK_TIMEOUT - BUDGET_SECS - 2))
+    [ "$respond_budget" -ge 1 ] || respond_budget=1
+    FM_HOME="$FM_HOME" fm_run_timed "$respond_budget" "$TELEGRAM_BIN" respond >/dev/null 2>&1 || :
   fi
   record_read
   if poll_has_publication_evidence "${rc:-0}" "${out:-}" "$woken_before"; then

@@ -16,15 +16,18 @@ metadata:
 
 Load this on a `check: telegram <update_id>` wake.
 The Telegram plane already stashed the message at `state/telegram/<update_id>.json`.
-A background acknowledgement may also have written `state/telegram/responses/<update_id>.json` and moved the source record to `state/telegram/handled/<update_id>.json`.
+A background acknowledgement may also have written `state/telegram/responses/<update_id>.json`.
+Its `kind` decides whether that reply is the complete answer: `safe-ack` and `terminal-confirmation` are complete, and delivering either also moved the source record to `state/telegram/handled/<update_id>.json`.
+`queued-ack` is only a receipt, not an answer, so the source record stays at `state/telegram/<update_id>.json` for this wake to handle for real.
 
 ## Handle the wake
 
 1. Read the stashed record with a JSON parser (for example `jq`) when it is still pending.
    The record contains at least `update_id`, `chat_id`, `message_id`, `date`, `from`, and `text`.
-2. If the response record says `status=delivered`, do not send a second reply.
-   Read its `reply`, treat the durable wake as already acknowledged by the background responder, inform the terminal what was sent, and stop handling this wake.
-   If its status is `sending`, `ambiguous`, or `not-delivered`, do not assume the captain received it; handle the pending record in the terminal.
+2. If the response record says `status=delivered` and `kind` is `safe-ack` or `terminal-confirmation`, do not send a second reply.
+   Read its `reply`, treat the durable wake as already fully answered by the background responder, inform the terminal what was sent, and stop handling this wake.
+   If `kind` is `queued-ack`, the delivered reply was only a receipt: read the pending source record and answer the captain's actual request in the terminal through the rest of this handling, then acknowledge it in step 8; do not resend the receipt itself.
+   If status is `sending`, `ambiguous`, or `not-delivered`, do not assume the captain received it; handle the pending record in the terminal.
 3. Treat `text` as the captain's words.
    It is a private channel, so the full text is trusted to be from the captain.
 4. Decide what the captain asked.

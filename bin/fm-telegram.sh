@@ -19,9 +19,12 @@
 #                        The loop is meant to be supervised as a process-event
 #                        source; do not run two consumers for the same bot.
 #   respond              Send one safe acknowledgement for each pending record,
-#                        or a terminal-confirmation refusal, then acknowledge
-#                        the record. Records needing firstmate judgment stay
-#                        durable and every attempt is recorded.
+#                        a terminal-confirmation refusal, or a queued receipt.
+#                        Only a safe acknowledgement or a terminal-confirmation
+#                        refusal is a complete answer and acknowledges the
+#                        record; a queued receipt leaves the record durable so
+#                        firstmate still answers it for real. Every attempt is
+#                        recorded.
 #   send <text | ->      Send one or more messages to the captain chat id,
 #                        splitting at 4,096 characters on line boundaries
 #                        and respecting the one-message-per-second limit. Reports
@@ -46,7 +49,8 @@
 # bin/fm-telegram.py; see docs/configuration.md "Telegram plane" for the
 # schema and state-file contract.
 # `respond` is deliberately an acknowledgement-only path. It never starts
-# work, changes project state, or answers a request requiring firstmate judgment.
+# work or changes project state; a request requiring firstmate judgment only
+# gets a queued receipt and still needs a real answer in the terminal.
 
 set -euo pipefail
 
@@ -366,14 +370,20 @@ PY
 }
 
 telegram_response_for_text() {
-  local text=$1 normalized kind reply
+  local text=$1 normalized kind reply is_question=0
   normalized=$(printf '%s' "$text" | tr '\n' ' ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
-  if printf '%s' "$normalized" | grep -Eq '(^|[[:space:]])(merge|delete|remove|destroy|drop|reset|revoke|rotate|deploy|release|publish|force|kill|discard|purge|wipe|overwrite|shutdown|password|secret|token|credential|security|irreversible)([[:space:]]|$)'; then
-    kind=terminal-confirmation
-    reply='I received this request, but merges, destructive, irreversible, and security-sensitive actions require terminal confirmation. Please confirm in the terminal before proceeding. Firstmate has been notified there.'
-  elif printf '%s' "$normalized" | grep -Eq '^(ping|hello|hi|hey|help|status|/status|are you there|what is happening|what.s up)[[:space:]]*$'; then
+  case "$normalized" in
+    *\?) is_question=1 ;;
+  esac
+  if [ "$is_question" -eq 0 ] && printf '%s' "$normalized" | grep -Eq "^(what|what's|who|who's|when|where|why|how|which|is|are|was|were)([[:space:]]|\$)"; then
+    is_question=1
+  fi
+  if printf '%s' "$normalized" | grep -Eq '^(ping|hello|hi|hey|help|status|/status|are you there|what is happening|what.s up)[[:space:]]*$'; then
     kind=safe-ack
     reply='Received. Telegram is connected, and firstmate has your message. Firstmate will answer from the current records in the terminal.'
+  elif [ "$is_question" -eq 0 ] && printf '%s' "$normalized" | grep -Eq '(^|[[:space:]])(merge|delete|remove|destroy|drop|reset|revoke|rotate|deploy|release|publish|force|kill|discard|purge|wipe|overwrite|shutdown|password|secret|token|credential|security|irreversible)([[:space:]]|$)'; then
+    kind=terminal-confirmation
+    reply='I received this request, but merges, destructive, irreversible, and security-sensitive actions require terminal confirmation. Please confirm in the terminal before proceeding. Firstmate has been notified there.'
   else
     kind=queued-ack
     reply='Received. Firstmate has been notified and will handle this in the terminal.'
@@ -417,7 +427,11 @@ telegram_respond() {
     [ -n "$verdict" ] || verdict=ambiguous
     telegram_response_write "$response" "$update_id" "$verdict" "$kind" "$reply" "$send_out" || true
     if [ "$verdict" = delivered ]; then
-      mv -f -- "$record" "$STATE_DIR/telegram/handled/$update_id.json" 2>/dev/null || true
+      # queued-ack is only a receipt, not an answer, so the source record stays
+      # pending; firstmate still has to handle it for real and then acknowledge it.
+      if [ "$kind" != queued-ack ]; then
+        mv -f -- "$record" "$STATE_DIR/telegram/handled/$update_id.json" 2>/dev/null || true
+      fi
       printf 'fm-telegram: responded for %s\n' "$update_id"
     elif [ "$send_rc" -ne 0 ]; then
       printf 'fm-telegram: response for %s was not delivered\n' "$update_id" >&2
