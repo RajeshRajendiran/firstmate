@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # Record a PR-ready task: store one validated canonical pr=<url> and the forge's
 # exact pr_head=<sha> when available, then atomically arm a static merge poll.
+# Refuses when bin/fm-dod-lib.sh will not accept the named head as reachable
+# outside the worker's disposable copy; in no-mistakes mode a forge-reported
+# head is that named head and is already stored on the forge.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
 # A GitHub pull request URL and a GitLab merge request URL are both accepted,
 # including a merge request on a self-hosted GitLab instance.
+# A GitHub pull request the forge reports as a draft is refused, naming the draft
+# state and recording and arming nothing: a draft cannot be merged, so a poll armed on it
+# would wait for an event that cannot occur while nobody is asked to act.
+# Mark the pull request ready for review, then arm again; a lane that keeps a
+# draft on purpose declares a wait instead of reporting done. An unreadable
+# draft state does not refuse, matching how the head read below is optional.
+# bin/fm-pr-merge.sh records through this script with FM_PR_CHECK_MERGE=1 and
+# skips this refusal, because its own merge-time draft refusal is authoritative.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -19,6 +30,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -60,6 +73,16 @@ if [ "$PROVIDER" = gitlab ] && ! command -v glab >/dev/null 2>&1; then
   exit 1
 fi
 
+# The draft state is read before anything is recorded or armed. Only a positive
+# draft reading refuses, because an unreadable one must not block arming.
+if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  DRAFT_JSON=$(gh pr view "$URL" --json isDraft 2>/dev/null || true)
+  if [ "$(fm_pr_json_draft_state "$DRAFT_JSON")" = true ]; then
+    echo "error: $URL is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate" >&2
+    exit 1
+  fi
+fi
+
 "$FM_ROOT/bin/fm-guard.sh" || true
 
 # pr_head is recorded only when the forge's CLI can supply it. gh exposes the
@@ -78,6 +101,19 @@ if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/d
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+fi
+
+KIND=$(grep '^kind=' "$META" | tail -1 | cut -d= -f2- || true)
+MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
+PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+case "$MODE" in
+  no-mistakes|'') DONE_LINE="done: PR $URL checks green" ;;
+  *) DONE_LINE="done: PR $URL" ;;
+esac
+if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
+  && ! GATE_REASON=$(fm_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META"); then
+  echo "error: $GATE_REASON" >&2
+  exit 1
 fi
 
 META_TMP=

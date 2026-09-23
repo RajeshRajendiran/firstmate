@@ -15,10 +15,11 @@
 # direction is unsafe: a false negative hides a genuinely parked run, and a
 # false positive lets teardown act on a run it does not own.
 #
-# Bounded call to `no-mistakes "$@"` in dir $1, timeout $2 seconds. The bounded
+# Bounded call to an arbitrary command in dir $1, timeout $2 seconds, and its
+# `no-mistakes "$@"` specialization. The bounded
 # form preserves stdout, stderr, and exit status; the checked form discards
 # stderr, while fm_nm_run keeps the fail-open query contract for read-only callers.
-fm_nm_run_bounded() {  # <dir> <timeout_secs> <args...>
+fm_nm_bounded() {  # <dir> <timeout_secs> <command> <args...>
   local dir=$1 timeout_secs=$2 have_timeout=none
   shift 2
   if command -v timeout >/dev/null 2>&1; then have_timeout=timeout
@@ -26,11 +27,17 @@ fm_nm_run_bounded() {  # <dir> <timeout_secs> <args...>
   elif command -v perl >/dev/null 2>&1; then have_timeout=perl
   fi
   case "$have_timeout" in
-    timeout)  ( cd "$dir" && timeout "$timeout_secs" no-mistakes "$@" ) ;;
-    gtimeout) ( cd "$dir" && gtimeout "$timeout_secs" no-mistakes "$@" ) ;;
-    perl)     ( cd "$dir" && perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$timeout_secs" no-mistakes "$@" ) ;;
+    timeout)  ( cd "$dir" && timeout "$timeout_secs" "$@" ) ;;
+    gtimeout) ( cd "$dir" && gtimeout "$timeout_secs" "$@" ) ;;
+    perl)     ( cd "$dir" && perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' "$timeout_secs" "$@" ) ;;
     *)        return 1 ;;
   esac
+}
+
+fm_nm_run_bounded() {  # <dir> <timeout_secs> <args...>
+  local dir=$1 timeout_secs=$2
+  shift 2
+  fm_nm_bounded "$dir" "$timeout_secs" no-mistakes "$@"
 }
 
 fm_nm_run_checked() {  # <dir> <timeout_secs> <args...>
@@ -120,6 +127,18 @@ fm_nm_run_status_class() {  # <status_word>
 # toolchain. A capped overview requires an optional Python 3 sqlite3 reader
 # for a read-only same-branch query of NM_HOME/state.sqlite (default:
 # ~/.no-mistakes/state.sqlite; relative NM_HOME resolves from the worktree).
+# Repo identity is the overview's own top-level `repo:` line, which every axi
+# release emits: it is the `working_path` the CLI itself resolved for the
+# queried worktree. That is NOT the task worktree path in general - a linked
+# git worktree resolves to its main clone's registered path (observed
+# 2026-09-22 on v1.79.0: every task copy of a firstmate home reports
+# `repo: <home clone>`, and looking the repo up by the task worktree path
+# matched no row, so every capped read reported the inventory unreadable).
+# The recorded spelling is matched exactly, so an overview without exactly one
+# absolute `repo:` line, or with one the inventory does not record, reads as
+# unreadable rather than guessed among candidates.
+# The reader subprocess is bounded by $4 seconds (default 10), so a contended
+# database can never outlast the caller's per-read budget.
 # If that reader or inventory is unavailable, report unknown with available
 # candidate ids rather than treating the displayed window as complete.
 # Structural completeness applies to the whole table; semantic validation
@@ -139,8 +158,9 @@ fm_nm_run_status_class() {  # <status_word>
 # for this branch), or unavailable (CLI has no overview table). Malformed or
 # structurally truncated tables report unknown, retaining every readable
 # same-branch candidate id.
-fm_nm_select_run() {  # <branch> <axi-overview> <worktree>
-  local selection inventory available_ids
+fm_nm_select_run() {  # <branch> <axi-overview> <worktree> [timeout_secs]
+  local selection inventory available_ids timeout_secs=${4:-10}
+  case "$timeout_secs" in ''|*[!0-9]*) timeout_secs=10 ;; esac
   selection=$(printf '%s\n' "$2" | awk -v branch="$1" '
     function scalar(s) {
       sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
@@ -199,9 +219,9 @@ fm_nm_select_run() {  # <branch> <axi-overview> <worktree>
     inrows { inrows = 0 }
     END {
       if (!found) print "unavailable"
-      else if (bad || counts != 1 || seen != expected || seen != shown || total < shown)
+      else if (bad || counts != 1 || (seen+0) != (expected+0) || (seen+0) != (shown+0) || (total+0) < (shown+0))
         print "unknown|unreadable runs table; run ids: " ids
-      else if (shown < total) print "incomplete|" ids
+      else if ((shown+0) < (total+0)) print "incomplete|" ids
       else if (invalid_run) print "unknown|unreadable runs table; run ids: " ids
       else if (unknown_status) print "unknown|unrecognized run status; run ids: " ids
       else if (first == "") print "absent"
@@ -214,7 +234,7 @@ fm_nm_select_run() {  # <branch> <axi-overview> <worktree>
     incomplete\|*) available_ids=${selection#*|} ;;
     *) printf '%s\n' "$selection"; return ;;
   esac
-  if ! inventory=$(python3 - "$1" "$2" "$3" "$available_ids" 2>/dev/null <<'PY'
+  if ! inventory=$(fm_nm_bounded "$3" "$timeout_secs" python3 - "$1" "$2" "$3" "$available_ids" 2>/dev/null <<'PY'
 import json
 import os
 import re
@@ -235,7 +255,7 @@ try:
     root = Path(os.environ.get("NM_HOME") or Path.home() / ".no-mistakes")
     if not root.is_absolute():
         root = Path(worktree) / root
-    with closing(sqlite3.connect((root / "state.sqlite").as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+    with closing(sqlite3.connect((root / "state.sqlite").as_uri() + "?mode=ro", uri=True, timeout=30)) as db:
         db.execute("BEGIN")
         repo = db.execute("SELECT id FROM repos WHERE working_path = ?", (repo_path,)).fetchall()
         if len(repo) != 1:
@@ -268,7 +288,7 @@ PY
   fi
   case "$inventory" in
     unknown\|*) selection=$inventory ;;
-    *) selection=$(fm_nm_select_run "$1" "$inventory" "$3") ;;
+    *) selection=$(fm_nm_select_run "$1" "$inventory" "$3" "$timeout_secs") ;;
   esac
   case "$selection" in
     selected\|*|unknown\|*|absent) printf '%s\n' "$selection" ;;
@@ -349,7 +369,7 @@ fm_nm_run_is_parked() {  # <toon-output>
 # daemon-down probe for exactly that reason.
 # All four accepted words reach here on BOTH surfaces. The overview table
 # fm_nm_select_run validates carries a narrower column
-# (pending|running|completed|failed|cancelled, :196), but that column is not
+# (pending|running|completed|failed|cancelled, its unknown_status check), but that column is not
 # what this predicate reads: the selected-run route re-reads the run by id and
 # passes that DETAIL object, whose own vocabulary check admits `fixing` and `ci`
 # as live, and the legacy bare-status route passes the same detail shape.
