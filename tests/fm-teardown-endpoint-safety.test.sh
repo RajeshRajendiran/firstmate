@@ -983,6 +983,128 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
+# The pool handed one slot to several tasks in turn, so several records name it
+# while its claim names the task that took it last. Every record that the claim
+# proves is not the owner finishes its own cleanup without touching the slot,
+# however many other records share it; the owner keeps refusing only while a
+# record that may still depend on the slot remains, and then returns it.
+write_slot_record() {  # <case> <id> <kind>
+  fm_write_meta "$1/home/state/$2.meta" \
+    "window=firstmate:fm-$2" "endpoint_task_id=$2" \
+    "worktree=$1/worktree" "project=$1/project" "kind=$3"
+}
+
+teardown_slot_record() {  # <case> <id> [--force]
+  local dir=$1 id=$2
+  shift 2
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" "$@" > "$dir/stdout" 2> "$dir/stderr"
+}
+
+assert_shared_slot_untouched() {  # <case> <claimant> <description>
+  local dir=$1 claimant=$2 description=$3
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$claimant" \
+    "$description: the slot claim was rewritten or removed"
+  assert_present "$dir/pool/1/project/.git" "$description: the slot's checkout was removed"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "$description: the shared slot was returned to the pool: $(cat "$dir/runtime.log")"
+}
+
+test_shared_slot_records_each_finish_their_own_cleanup() {
+  local dir id worker rc
+
+  # Four records on one clean slot whose claim names the merged ship: two
+  # finished scouts, a dead scout, and the ship itself.
+  dir=$(make_case slot-shared-by-four)
+  mark_case_as_treehouse_pool "$dir"
+  rm -f "$dir/worktree/sentinel"
+  write_slot_record "$dir" merged-ship ship
+  write_slot_record "$dir" finished-scout-a scout
+  write_slot_record "$dir" finished-scout-b scout
+  write_slot_record "$dir" dead-scout scout
+  claim_pool_slot "$dir" merged-ship
+  for id in finished-scout-a finished-scout-b dead-scout; do
+    teardown_slot_record "$dir" "$id" --force \
+      || fail "teardown of $id, whose shared slot is claimed by another task, was refused: $(cat "$dir/stderr")"
+    assert_absent "$dir/home/state/$id.meta" "$id's own record was not removed"
+    assert_shared_slot_untouched "$dir" merged-ship "teardown of $id"
+    assert_contains "$(cat "$dir/stderr")" "reassigned to task merged-ship" \
+      "teardown of $id should name the task that holds the slot"
+  done
+  teardown_slot_record "$dir" merged-ship \
+    || fail "teardown of the slot's owner failed once it alone recorded the slot: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/merged-ship.meta" "the owner's record was not removed"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the owner did not return its slot: $(cat "$dir/runtime.log")"
+  assert_absent "$dir/pool/1/.fm-slot-owner" "the owner left its spent claim behind"
+
+  # A merged ship, the finished scout holding the claim, and a live scout that
+  # a relaunch put back into its own recorded worktree after the claim moved on.
+  dir=$(make_case slot-shared-with-live)
+  mark_case_as_treehouse_pool "$dir"
+  rm -f "$dir/worktree/sentinel"
+  write_slot_record "$dir" merged-ship ship
+  write_slot_record "$dir" claim-scout scout
+  write_slot_record "$dir" live-scout scout
+  claim_pool_slot "$dir" claim-scout
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  teardown_slot_record "$dir" merged-ship \
+    || fail "teardown of a landed ship on a shared slot claimed by another task was refused: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/merged-ship.meta" "the landed ship's own record was not removed"
+  assert_shared_slot_untouched "$dir" claim-scout "teardown of the landed ship"
+  kill -0 "$worker" 2>/dev/null || fail "teardown of the landed ship killed the live worker in the shared slot"
+
+  # The claimant owns the slot, but another record still names it, so returning
+  # it could kill that task's worker: refuse, change nothing, and say how to
+  # clear it.
+  rc=0
+  teardown_slot_record "$dir" claim-scout --force || rc=$?
+  [ "$rc" -ne 0 ] || fail "the slot's owner returned it while another record still named it"
+  assert_present "$dir/home/state/claim-scout.meta" "the refused owner's record was removed"
+  assert_shared_slot_untouched "$dir" claim-scout "refused owner teardown"
+  kill -0 "$worker" 2>/dev/null || fail "the refused owner teardown killed the live worker"
+  assert_contains "$(cat "$dir/stderr")" "live-scout" \
+    "the owner's refusal should name the record still using the slot"
+  assert_contains "$(cat "$dir/stderr")" "claim names claim-scout" \
+    "the owner's refusal should explain that the other record no longer owns the slot"
+
+  # The live scout's own cleanup kills only its own endpoint: the process in the
+  # slot it does not own survives, and so does the slot.
+  teardown_slot_record "$dir" live-scout --force \
+    || fail "teardown of a live scout on a slot claimed by another task was refused: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/live-scout.meta" "the live scout's own record was not removed"
+  assert_shared_slot_untouched "$dir" claim-scout "teardown of the live scout"
+  grep -Fq "tmux <kill-window>" "$dir/runtime.log" \
+    || fail "the live scout's own recorded endpoint was not closed: $(cat "$dir/runtime.log")"
+  kill -0 "$worker" 2>/dev/null || fail "the live scout's teardown killed a process in a slot it does not own"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  teardown_slot_record "$dir" claim-scout --force \
+    || fail "the slot's owner could not finish once it alone recorded the slot: $(cat "$dir/stderr")"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the owner did not return its slot: $(cat "$dir/runtime.log")"
+
+  # The owner's own landed-work gate still applies to the slot it owns.
+  dir=$(make_case slot-shared-owner-dirty)
+  mark_case_as_treehouse_pool "$dir"
+  write_slot_record "$dir" dirty-ship ship
+  write_slot_record "$dir" finished-scout scout
+  claim_pool_slot "$dir" dirty-ship
+  teardown_slot_record "$dir" finished-scout --force \
+    || fail "teardown of a finished scout on a claimed shared slot was refused: $(cat "$dir/stderr")"
+  rc=0
+  teardown_slot_record "$dir" dirty-ship || rc=$?
+  [ "$rc" -ne 0 ] || fail "the owner returned a slot holding uncommitted work without --force"
+  assert_present "$dir/worktree/sentinel" "the owner's refused teardown discarded its uncommitted work"
+  assert_present "$dir/home/state/dirty-ship.meta" "the owner's refused teardown removed its record"
+
+  pass "fm-teardown: every record on a shared pool slot that the claim proves is not the owner finishes its own cleanup, leaving the slot to its owner"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1403,6 +1525,7 @@ test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
+test_shared_slot_records_each_finish_their_own_cleanup
 test_own_and_absent_slot_claims_still_tear_down
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts

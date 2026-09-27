@@ -1260,7 +1260,7 @@ fm_task_set_lock_path() {  # <state-dir>
 # the walk at the current home, which is the correct answer rather than an
 # error: the parent lives on another machine, so its filesystem can neither hold
 # nor be observed by a lock taken here, and a remote-seeded home is itself the
-# top of the local tree that bin/fm-teardown.sh's collect_local_firstmate_states
+# top of the local tree that fm_treehouse_record_states below
 # enumerates (that walk already skips remote registry entries for the same
 # reason). Refusing a remote binding instead made every operation anchored here
 # fail closed inside a remote secondmate home and its local descendants.
@@ -1435,6 +1435,249 @@ fm_treehouse_slot_owner_release() {  # <worktree> <task-id>
   [ "$FM_TREEHOUSE_SLOT_OWNER" = mine ] || return 0
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 0
   rm -f "$marker" 2>/dev/null || true
+}
+
+# Every state directory on this machine whose task records can name a pool slot:
+# the given record's own state directory, the local root home's, and every home
+# registered below it through local secondmate registries. Remote registry
+# entries are skipped because their records live on another machine and can
+# never name a slot here. Sets FM_TREEHOUSE_RECORD_STATES for
+# fm_treehouse_recorded_dirs, which reads records through bin/fm-backend.sh's
+# fm_meta_get, so the caller must have sourced that. On failure it returns 1
+# with the reason in FM_TREEHOUSE_SLOT_ERROR, because an unreadable registry
+# means a record could be missed.
+fm_treehouse_record_states() {  # <record-state>
+  local record_state=$1 root home reg line child known existing i=0
+  local -a homes
+  FM_TREEHOUSE_SLOT_ERROR=
+  FM_TREEHOUSE_RECORD_STATES=("$record_state")
+  command -v fm_meta_get >/dev/null 2>&1 || {
+    FM_TREEHOUSE_SLOT_ERROR="task records cannot be read without bin/fm-backend.sh"
+    return 1
+  }
+  root=$(fm_firstmate_root_home "$FM_HOME") || {
+    FM_TREEHOUSE_SLOT_ERROR="cannot resolve the root Firstmate home"
+    return 1
+  }
+  if ! command -v secondmate_registry_parse_line >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-secondmate-registry-lib.sh
+    . "$FM_WAKE_LIB_DIR/fm-secondmate-registry-lib.sh"
+  fi
+  homes=("$root")
+  while [ "$i" -lt "${#homes[@]}" ]; do
+    home=${homes[$i]}
+    i=$((i + 1))
+    known=0
+    for existing in "${FM_TREEHOUSE_RECORD_STATES[@]}"; do
+      [ "$existing" != "$home/state" ] || known=1
+    done
+    [ "$known" = 1 ] || FM_TREEHOUSE_RECORD_STATES+=("$home/state")
+    reg="$home/data/secondmates.md"
+    [ ! -e "$reg" ] && [ ! -L "$reg" ] && continue
+    [ -f "$reg" ] && [ ! -L "$reg" ] || {
+      FM_TREEHOUSE_SLOT_ERROR="local Firstmate registry is unsafe at $reg"
+      return 1
+    }
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "- "*)
+          secondmate_registry_parse_line "$line" || {
+            FM_TREEHOUSE_SLOT_ERROR="malformed local Firstmate registry entry in $reg"
+            return 1
+          }
+          [ "$SECONDMATE_REGISTRY_REMOTE" -eq 0 ] || continue
+          child=$(CDPATH='' cd -- "$SECONDMATE_REGISTRY_HOME" 2>/dev/null && pwd -P) || {
+            FM_TREEHOUSE_SLOT_ERROR="registered local Firstmate home is unavailable: $SECONDMATE_REGISTRY_HOME"
+            return 1
+          }
+          known=0
+          for existing in "${homes[@]}"; do
+            [ "$existing" != "$child" ] || known=1
+          done
+          [ "$known" = 1 ] || homes+=("$child")
+          ;;
+      esac
+    done < "$reg"
+  done
+}
+
+# Each canonical existing directory a task record in FM_TREEHOUSE_RECORD_STATES
+# names as its worktree= or secondmate home=, one "<id><TAB><field><TAB><dir>"
+# line per naming, skipping <record-meta> itself when given. Identity, not
+# spelling, decides "itself": the same record reached through a differently
+# resolved state dir (e.g. a symlinked $FM_HOME) is still that record, while a
+# differently named hardlink is another task's record, so the name must match too.
+fm_treehouse_recorded_dirs() {  # [record-meta]
+  local record_meta=${1:-} state_dir record_file field path dir
+  for state_dir in "${FM_TREEHOUSE_RECORD_STATES[@]}"; do
+    for record_file in "$state_dir"/*.meta; do
+      [ -f "$record_file" ] && [ ! -L "$record_file" ] || continue
+      if [ -n "$record_meta" ] && [ "${record_file##*/}" = "${record_meta##*/}" ] \
+         && [ "$record_file" -ef "$record_meta" ]; then
+        continue
+      fi
+      for field in worktree home; do
+        path=$(fm_meta_get "$record_file" "$field")
+        [ -n "$path" ] || continue
+        dir=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || continue
+        printf '%s\t%s\t%s\n' "$(basename "$record_file" .meta)" "$field" "$dir"
+      done
+    done
+  done
+}
+
+# Whether this task's record still stands on its recorded pool slot, combining
+# the slot's own owner claim with every other local record naming the slot.
+# Teardown and relaunch both act on this one determination, so they can never
+# disagree about whose slot it is. Sets FM_TREEHOUSE_SLOT_STANDING to one of:
+#   own        - the claim names this task, or there is no claim, and no other
+#                record names the slot: it is this task's to use and return
+#   reassigned - the claim names another task: the pool handed the slot on after
+#                this record was written, so the slot is not this task's, and
+#                every other record naming it is irrelevant to this task
+#   contested  - another record also names the slot (FM_TREEHOUSE_SLOT_OTHER_ID
+#                and FM_TREEHOUSE_SLOT_OTHER_FIELD). With the claim naming this
+#                task (FM_TREEHOUSE_SLOT_OWNER=mine) that record provably does
+#                not own the slot but may still be running in it; with no claim
+#                nobody can prove whose slot it is
+#   unsafe     - a claim file exists but cannot be read as a claim
+# The claimant stays in FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME.
+# Returns 1, with FM_TREEHOUSE_SLOT_ERROR, only when the records cannot be
+# enumerated.
+fm_treehouse_slot_standing() {  # <record-meta> <task-id> <record-state> <worktree>
+  local record_meta=$1 id=$2 record_state=$3 worktree=$4
+  FM_TREEHOUSE_SLOT_OTHER_ID=
+  FM_TREEHOUSE_SLOT_OTHER_FIELD=
+  fm_treehouse_slot_owner_state "$worktree" "$id"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other) FM_TREEHOUSE_SLOT_STANDING=reassigned; return 0 ;;
+    mine|absent) ;;
+    *) FM_TREEHOUSE_SLOT_STANDING=unsafe; return 0 ;;
+  esac
+  FM_TREEHOUSE_SLOT_STANDING=own
+  fm_treehouse_slot_recorder "$record_meta" "$record_state" "$worktree"
+  case $? in
+    0) FM_TREEHOUSE_SLOT_STANDING=contested ;;
+    1) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Relaunch reuses a task's recorded slot instead of allocating one, so the slot
+# must still be that task's alone: a relaunch into a slot the pool handed to
+# another task puts this worker into that task's copy, and one into a slot
+# another record still names puts two workers into one copy. Prints the refusal
+# and returns 1 unless fm_treehouse_slot_standing reads the slot as its own.
+fm_treehouse_slot_relaunch_check() {  # <record-meta> <task-id> <record-state> <worktree>
+  local record_meta=$1 id=$2 record_state=$3 worktree=$4
+  if ! fm_treehouse_slot_standing "$record_meta" "$id" "$record_state" "$worktree"; then
+    echo "error: cannot tell whether task $id's recorded worktree $worktree is still its own pool slot ($FM_TREEHOUSE_SLOT_ERROR); refusing to relaunch into it" >&2
+    return 1
+  fi
+  case "$FM_TREEHOUSE_SLOT_STANDING" in
+    own) return 0 ;;
+    reassigned)
+      echo "error: task $id's recorded worktree $worktree was reassigned to task $FM_TREEHOUSE_SLOT_OWNER_ID${FM_TREEHOUSE_SLOT_OWNER_HOME:+ (home $FM_TREEHOUSE_SLOT_OWNER_HOME)}, which claimed that pool slot after this record was written; refusing to relaunch $id into another task's copy" >&2
+      ;;
+    contested)
+      echo "error: task $id's recorded worktree $worktree is also task $FM_TREEHOUSE_SLOT_OTHER_ID's recorded $FM_TREEHOUSE_SLOT_OTHER_FIELD; refusing to relaunch $id into a copy another task may be using" >&2
+      ;;
+    *)
+      echo "error: task $id's recorded worktree $worktree carries a slot-owner claim that cannot be read; refusing to relaunch into a slot that cannot be proved to be its own" >&2
+      ;;
+  esac
+  return 1
+}
+
+# Whether any local task record other than <record-meta> (empty for none) names
+# <worktree> as its worktree= or home=. Returns 0 with the first such record in
+# FM_TREEHOUSE_SLOT_OTHER_ID and FM_TREEHOUSE_SLOT_OTHER_FIELD, 1 when none does,
+# and 2, with FM_TREEHOUSE_SLOT_ERROR, when the records cannot be enumerated.
+fm_treehouse_slot_recorder() {  # <record-meta> <record-state> <worktree>
+  local record_meta=$1 record_state=$2 worktree=$3 slot other_id field dir
+  FM_TREEHOUSE_SLOT_OTHER_ID=
+  FM_TREEHOUSE_SLOT_OTHER_FIELD=
+  slot=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd -P) || return 1
+  fm_treehouse_record_states "$record_state" || return 2
+  while IFS=$'\t' read -r other_id field dir; do
+    [ "$dir" = "$slot" ] || continue
+    FM_TREEHOUSE_SLOT_OTHER_ID=$other_id
+    FM_TREEHOUSE_SLOT_OTHER_FIELD=$field
+    return 0
+  done < <(fm_treehouse_recorded_dirs "$record_meta")
+  return 1
+}
+
+# Allocation hold: keep every pool slot a local task record still names out of
+# the next interactive `treehouse get`.
+#
+# That get hands out a slot with no process running in it, because its lease is
+# only a process lease (see the slot-owner claim comment above). A task whose
+# worker has exited - a finished scout awaiting cleanup, a paused ship, a landed
+# ship not yet cleaned up - leaves its slot idle while its record still names
+# it, so the pool would hand that slot to the next spawn, which resets the copy
+# the record points at and leaves two records naming one slot. The hold answers
+# the pool in its own terms: for the length of the allocation, one idle process
+# sits in each recorded slot, so Treehouse sees it in use and skips it.
+#
+# Each holder is forked with the slot already as its working directory, so the
+# slot reads as in use from the instant this returns. A holder exits as soon as
+# the hold is released, and on its own within a second of this shell exiting for
+# any reason, even SIGKILL, so it never outlives the allocation.
+# Run it under the Treehouse project lock, which keeps any other spawn or return
+# from changing which slots are recorded while the hold stands. Returns 1, with
+# FM_TREEHOUSE_SLOT_ERROR, when the records cannot be enumerated.
+FM_TREEHOUSE_SLOT_HOLD_PIDS=()
+fm_treehouse_slot_hold() {  # <record-state>
+  local record_state=$1 owner=$$ dir pool pids
+  local -a slots=()
+  fm_treehouse_slot_release
+  fm_treehouse_record_states "$record_state" || return 1
+  while IFS=$'\t' read -r _ _ dir; do
+    pool=$(dirname "$(dirname "$dir")")
+    [ -f "$pool/treehouse-state.json" ] && [ ! -L "$pool/treehouse-state.json" ] || continue
+    slots+=("$dir")
+  done < <(fm_treehouse_recorded_dirs)
+  [ "${#slots[@]}" -gt 0 ] || return 0
+  pids=$(
+    for dir in "${slots[@]}"; do
+      cd -- "$dir" 2>/dev/null || continue
+      fm_treehouse_slot_holder "$owner" </dev/null >/dev/null 2>&1 &
+      printf '%s\n' "$!"
+    done
+  )
+  # shellcheck disable=SC2206 # One pid per line, digits only.
+  FM_TREEHOUSE_SLOT_HOLD_PIDS=($pids)
+}
+
+# One holder: idle in its working directory while <owner-pid> lives. The nap
+# runs in the background so a release's TERM is handled at once rather than
+# after the nap, and the nap goes with it.
+fm_treehouse_slot_holder() {  # <owner-pid>
+  local owner=$1 nap=
+  trap '[ -z "$nap" ] || kill "$nap" 2>/dev/null; exit 0' TERM
+  while kill -0 "$owner" 2>/dev/null; do
+    sleep 1 &
+    nap=$!
+    wait "$nap"
+  done
+}
+
+# Release the hold and wait, briefly and boundedly, for every holder to go, so
+# the slots it covered read as free again by the time this returns.
+fm_treehouse_slot_release() {
+  local pid i
+  for pid in "${FM_TREEHOUSE_SLOT_HOLD_PIDS[@]+"${FM_TREEHOUSE_SLOT_HOLD_PIDS[@]}"}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+  for pid in "${FM_TREEHOUSE_SLOT_HOLD_PIDS[@]+"${FM_TREEHOUSE_SLOT_HOLD_PIDS[@]}"}"; do
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 50 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+  done
+  FM_TREEHOUSE_SLOT_HOLD_PIDS=()
 }
 
 fm_failure_episode_reset() {

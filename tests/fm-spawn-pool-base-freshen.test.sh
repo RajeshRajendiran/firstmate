@@ -743,7 +743,143 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   pass "a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort"
 }
 
+# A three-slot pool served by a Treehouse stand-in that follows Treehouse's own
+# allocation rule for an interactive `treehouse get`: hand out the first slot
+# with no process running in it. The stand-in terminal moves the pane into
+# whichever slot that was, so the slot a spawn records is the one the pool
+# actually chose. Sets SLOT_ROOT and exports FM_FAKE_PANE_FILE for the stand-ins.
+lay_out_as_three_slot_pool() {
+  local n fakebin=$FAKEBIN_DIR
+  SLOT_ROOT="$CASE_DIR/slots"
+  mkdir -p "$SLOT_ROOT/1" "$SLOT_ROOT/2" "$SLOT_ROOT/3"
+  git -C "$PROJECT_DIR" worktree move "$POOL_DIR" "$SLOT_ROOT/1/project"
+  git -C "$PROJECT_DIR" worktree add --quiet --detach "$SLOT_ROOT/2/project" "$INITIAL_SHA"
+  git -C "$PROJECT_DIR" worktree add --quiet --detach "$SLOT_ROOT/3/project" "$INITIAL_SHA"
+  SLOT_ROOT=$(cd "$SLOT_ROOT" && pwd -P)
+  printf '{"worktrees":[' > "$SLOT_ROOT/treehouse-state.json"
+  for n in 1 2 3; do
+    [ "$n" = 1 ] || printf ',' >> "$SLOT_ROOT/treehouse-state.json"
+    printf '{"name":"%s","path":"%s"}' "$n" "$SLOT_ROOT/$n/project" >> "$SLOT_ROOT/treehouse-state.json"
+  done
+  printf ']}\n' >> "$SLOT_ROOT/treehouse-state.json"
+  export FM_FAKE_PANE_FILE="$CASE_DIR/pane-path" FM_FAKE_SLOT_ROOT="$SLOT_ROOT"
+  printf '%s\n' "$PROJECT_DIR" > "$FM_FAKE_PANE_FILE"
+  mv "$fakebin/tmux" "$fakebin/tmux-base"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"#{pane_current_path}"*) cat "$FM_FAKE_PANE_FILE"; exit 0 ;;
+  "send-keys "*" treehouse get Enter") treehouse get; exit $? ;;
+esac
+exec "$(dirname "$0")/tmux-base" "$@"
+SH
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = get ] || exit 0
+. "$(dirname "$0")/slot-in-use"
+for n in 1 2 3; do
+  slot="$FM_FAKE_SLOT_ROOT/$n/project"
+  [ -n "${FM_FAKE_POOL_IGNORES_IN_USE:-}" ] || ! slot_in_use "$slot" || continue
+  printf '%s\n' "$slot" > "$FM_FAKE_PANE_FILE"
+  exit 0
+done
+echo "treehouse: every worktree is in use" >&2
+exit 1
+SH
+  write_slot_in_use_probe "$fakebin/slot-in-use"
+  chmod +x "$fakebin/tmux" "$fakebin/treehouse"
+}
+
+# Whether any process has its working directory inside a slot, read the way
+# Treehouse reads it: from the kernel's per-process cwd.
+write_slot_in_use_probe() {  # <file>
+  cat > "$1" <<'SH'
+slot_in_use() {  # <slot>
+  local slot=$1 p cwd
+  if [ -d /proc/self ]; then
+    for p in /proc/[0-9]*; do
+      cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
+      case "$cwd/" in "$slot"/*) return 0 ;; esac
+    done
+    return 1
+  fi
+  lsof -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | while IFS= read -r cwd; do
+    case "$cwd/" in "$slot"/*) exit 3 ;; esac
+  done
+  [ "$?" -eq 3 ]
+}
+SH
+}
+
+# The recurrence of 2026-09-23: an idle task whose worker has exited still
+# records its slot, and nothing is running in it, so the pool's own in-use rule
+# calls it free. A new spawn must not be handed that slot - nor one a registered
+# local secondmate home still records - and must leave nothing behind holding
+# the slots it passed over.
+test_spawn_skips_pool_slots_other_records_still_name() {
+  local rec id out status child_home slot1_head slot2_head
+  id='pool-recorded-slot-r1'
+  rec=$(make_case recorded-slot "$id")
+  read_case_record "$rec"
+  lay_out_as_three_slot_pool
+
+  fm_write_meta "$HOME_DIR/state/idle-scout.meta" \
+    "window=firstmate:fm-idle-scout" "endpoint_task_id=idle-scout" \
+    "worktree=$SLOT_ROOT/1/project" "project=$PROJECT_DIR" "kind=scout"
+  printf 'task=idle-scout\nhome=%s\n' "$HOME_DIR" > "$SLOT_ROOT/1/.fm-slot-owner"
+  child_home="$CASE_DIR/child-home"
+  mkdir -p "$child_home/state" "$child_home/data" "$child_home/config" "$child_home/projects"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$HOME_DIR" \
+    > "$child_home/.fm-secondmate-parent"
+  printf '%s\n' "- mate - fixture (home: $child_home; scope: test; projects: project; added 2026-01-01)" \
+    > "$HOME_DIR/data/secondmates.md"
+  fm_write_meta "$child_home/state/paused-ship.meta" \
+    "window=firstmate:fm-paused-ship" "endpoint_task_id=paused-ship" \
+    "worktree=$SLOT_ROOT/2/project" "project=$PROJECT_DIR" "kind=ship"
+  slot1_head=$(git -C "$SLOT_ROOT/1/project" rev-parse HEAD)
+  slot2_head=$(git -C "$SLOT_ROOT/2/project" rev-parse HEAD)
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "spawn should launch from the one slot no record names"$'\n'"$out"
+  assert_grep "worktree=$SLOT_ROOT/3/project" "$HOME_DIR/state/$id.meta" \
+    "spawn was handed a slot another task record still names"
+  [ "$(git -C "$SLOT_ROOT/1/project" rev-parse HEAD)" = "$slot1_head" ] \
+    || fail "spawn moved the idle task's recorded slot"
+  [ "$(git -C "$SLOT_ROOT/2/project" rev-parse HEAD)" = "$slot2_head" ] \
+    || fail "spawn moved the secondmate task's recorded slot"
+  grep -Fxq 'task=idle-scout' "$SLOT_ROOT/1/.fm-slot-owner" \
+    || fail "spawn rewrote the idle task's slot claim: $(cat "$SLOT_ROOT/1/.fm-slot-owner")"
+  grep -Fxq "task=$id" "$SLOT_ROOT/3/.fm-slot-owner" \
+    || fail "spawn did not claim the slot it was handed"
+  # shellcheck source=/dev/null
+  . "$FAKEBIN_DIR/slot-in-use"
+  ! slot_in_use "$SLOT_ROOT/1/project" \
+    || fail "spawn left a process holding the idle task's slot after it launched"
+  ! slot_in_use "$SLOT_ROOT/2/project" \
+    || fail "spawn left a process holding the secondmate task's slot after it launched"
+
+  # A pool that hands out a recorded slot anyway is caught before the new task
+  # claims, refreshes, or launches into the other task's copy.
+  id='pool-recorded-slot-ignored-r1'
+  fm_test_spawn_brief "$HOME_DIR" "$id"
+  printf '%s\n' "$PROJECT_DIR" > "$FM_FAKE_PANE_FILE"
+  out=$(FM_FAKE_POOL_IGNORES_IN_USE=1 run_spawn "$id" --scout)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn launched into a slot another task record names"
+  assert_contains "$out" "which task idle-scout still records" \
+    "the refusal did not name the task still recording the slot"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "spawn published a record for another task's slot"
+  grep -Fxq 'task=idle-scout' "$SLOT_ROOT/1/.fm-slot-owner" \
+    || fail "the refused spawn rewrote the idle task's slot claim: $(cat "$SLOT_ROOT/1/.fm-slot-owner")"
+  [ "$(git -C "$SLOT_ROOT/1/project" rev-parse HEAD)" = "$slot1_head" ] \
+    || fail "the refused spawn moved the idle task's recorded slot"
+  unset FM_FAKE_PANE_FILE FM_FAKE_SLOT_ROOT
+  pass "spawn is never handed a pool slot another task record in this or a registered local home still names"
+}
+
 test_remote_seeded_home_spawns_from_treehouse_pool
+test_spawn_skips_pool_slots_other_records_still_name
 test_pool_slot_claim_follows_the_spawn_outcome
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching

@@ -45,6 +45,8 @@ relaunch_cleanup() {
   for d in "${TASK_TMPS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
+  # A spawn installs each task's commit-trailer hooks read-only.
+  chmod -R u+w "$TMP_ROOT" 2>/dev/null || true
   rm -rf "$TMP_ROOT"
 }
 trap relaunch_cleanup EXIT
@@ -1236,6 +1238,63 @@ test_missing_worktree_refuses_before_stopping_anything() {
   pass "fm-control relaunch: an unaccountable local copy refuses before the agent is touched"
 }
 
+# Re-lay a case's task worktree as Treehouse pool slot 1 and record it there.
+move_task_into_pool_slot() {  # <case-dir> <id>
+  local dir=$1 id=$2 slot
+  mkdir -p "$dir/pool/1"
+  git -C "$dir/proj" worktree move "$dir/wt" "$dir/pool/1/wt"
+  slot=$(cd "$dir/pool/1/wt" && pwd -P)
+  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' "$slot" > "$dir/pool/treehouse-state.json"
+  grep -v '^worktree=' "$dir/home/state/$id.meta" > "$dir/meta.tmp"
+  printf 'worktree=%s\n' "$slot" >> "$dir/meta.tmp"
+  mv "$dir/meta.tmp" "$dir/home/state/$id.meta"
+  printf '%s' "$slot" > "$dir/fake/cwd"
+  printf '%s\n' "$slot"
+}
+
+# The slot-4 incident: the pool handed a stale task's slot to another task, and
+# relaunching the stale task put its new worker into that other task's copy.
+test_relaunch_into_a_pool_slot_that_is_not_its_own_refuses_before_stopping() {
+  local dir out rc slot
+  dir=$(new_case slot-reassigned rl10b)
+  add_ship_task "$dir" rl10b claude
+  slot=$(move_task_into_pool_slot "$dir" rl10b)
+  printf 'task=newer-scout\nhome=%s\n' "$dir/home" > "$dir/pool/1/.fm-slot-owner"
+  out=$(run_control "$dir" rl10b relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a relaunch into a slot claimed by another task should refuse"
+  assert_contains "$out" "reassigned to task newer-scout" \
+    "the refusal should name the task that holds the slot"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused relaunch must send nothing"
+
+  # The claim names this task, but another record still names the slot.
+  printf 'task=rl10b\nhome=%s\n' "$dir/home" > "$dir/pool/1/.fm-slot-owner"
+  printf 'window=fmses:fm-other\nendpoint_task_id=other\nworktree=%s\nkind=scout\n' "$slot" \
+    > "$dir/home/state/other.meta"
+  out=$(run_control "$dir" rl10b relaunch --note "x"); rc=$?
+  expect_code 1 "$rc" "a relaunch into a slot another record names should refuse"
+  assert_contains "$out" "also task other's recorded worktree" \
+    "the refusal should name the other record"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "a refused relaunch must not stop the agent"
+
+  # The launch owner refuses the same way when reached directly on a stopped agent.
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" rl10b --relaunch --harness claude); rc=$?
+  [ "$rc" -ne 0 ] || fail "spawn --relaunch launched into a slot another record names"
+  assert_contains "$out" "also task other's recorded worktree" \
+    "spawn --relaunch should give the same refusal"
+  [ -z "$(cat "$dir/fake/literal")" ] || fail "a refused spawn --relaunch must send nothing"
+  printf 'claude' > "$dir/fake/command"
+
+  # Once the slot is the task's own again, the relaunch goes ahead there.
+  rm -f "$dir/home/state/other.meta"
+  out=$(run_control "$dir" rl10b relaunch --note "x"); rc=$?
+  expect_code 0 "$rc" "a relaunch into the task's own claimed slot should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" rl10b worktree)" = "$slot" ] \
+    || fail "the relaunch must reuse the task's own slot"
+  pass "fm-control relaunch: a pool slot that is not the task's alone refuses before the agent is touched"
+}
+
 test_missing_instructions_refuse_before_stopping_anything() {
   local dir out rc
   dir=$(new_case nobrief rl11)
@@ -2419,6 +2478,7 @@ test_prefixed_prior_harness_wiring_is_still_retired
 test_muse_session_binding_is_retired_on_a_harness_switch
 test_cursor_session_binding_is_retired_on_a_harness_switch
 test_missing_worktree_refuses_before_stopping_anything
+test_relaunch_into_a_pool_slot_that_is_not_its_own_refuses_before_stopping
 test_missing_instructions_refuse_before_stopping_anything
 test_checkpoint_refusal_leaves_the_record_byte_identical
 test_checkpoint_refuses_uninspectable_head_and_status

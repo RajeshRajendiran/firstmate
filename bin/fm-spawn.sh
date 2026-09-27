@@ -1225,6 +1225,7 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$?
+  fm_treehouse_slot_release
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -4089,10 +4090,16 @@ agy_spawn_fail() {  # <detail>
 }
 
 if [ "$RELAUNCH" -eq 1 ]; then
-  # No worktree is acquired: the recorded one is reused as-is. What must be
-  # proven instead is that the adopted endpoint's shell is actually sitting in
-  # that worktree, so the replacement agent starts where the work is rather
-  # than wherever the pane happened to drift.
+  # No worktree is acquired: the recorded one is reused as-is, so it must still
+  # be this task's slot alone (bin/fm-control.sh checks the same before it stops
+  # the old agent).
+  if [ "$KIND" != secondmate ] && fm_treehouse_pool_slot "$PROJ_ABS" "$WT" \
+     && ! fm_treehouse_slot_relaunch_check "$STATE/$ID.meta" "$ID" "$STATE" "$WT"; then
+    exit 1
+  fi
+  # What must be proven next is that the adopted endpoint's shell is actually
+  # sitting in that worktree, so the replacement agent starts where the work is
+  # rather than wherever the pane happened to drift.
   relaunch_wt_real=$(real_path_or_raw "$WT")
   relaunch_seen=
   for _ in $(seq 1 10); do
@@ -4122,6 +4129,16 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  # The interactive get below hands out any slot with nothing running in it, and
+  # a task whose worker has exited leaves its still-recorded slot idle, so hold
+  # every slot a local task record still names until this allocation settles
+  # (bin/fm-wake-lib.sh's fm_treehouse_slot_hold owns why and how). The
+  # Treehouse project lock held since before allocation keeps that set of
+  # recorded slots from changing under the hold.
+  if ! fm_treehouse_slot_hold "$STATE"; then
+    echo "error: cannot tell which Treehouse pool slots other tasks still record ($FM_TREEHOUSE_SLOT_ERROR); refusing to let the pool hand out a slot another task's record names" >&2
+    exit 1
+  fi
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
@@ -4196,12 +4213,28 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    # The hold should make this unreachable; it proves the pool honored it
+    # before this task claims, freshens, or launches into another task's copy.
+    slot_recorder_rc=0
+    fm_treehouse_slot_recorder "" "$STATE" "$WT" || slot_recorder_rc=$?
+    case "$slot_recorder_rc" in
+      0)
+        echo "error: Treehouse handed out pool slot $WT, which task $FM_TREEHOUSE_SLOT_OTHER_ID still records as its $FM_TREEHOUSE_SLOT_OTHER_FIELD; refusing to launch task $ID into another task's copy; inspect window $T" >&2
+        exit 1
+        ;;
+      1) ;;
+      *)
+        echo "error: cannot tell whether another task still records pool slot $WT ($FM_TREEHOUSE_SLOT_ERROR); refusing to launch task $ID into it; inspect window $T" >&2
+        exit 1
+        ;;
+    esac
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
       exit 1
     fi
     SPAWN_SLOT_CLAIMED=1
   fi
+  fm_treehouse_slot_release
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
