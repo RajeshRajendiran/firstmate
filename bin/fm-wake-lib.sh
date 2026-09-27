@@ -1508,19 +1508,19 @@ fm_treehouse_record_states() {  # <record-state>
 # resolved state dir (e.g. a symlinked $FM_HOME) is still that record, while a
 # differently named hardlink is another task's record, so the name must match too.
 fm_treehouse_recorded_dirs() {  # [record-meta]
-  local record_meta=${1:-} state_dir other field path dir
+  local record_meta=${1:-} state_dir record_file field path dir
   for state_dir in "${FM_TREEHOUSE_RECORD_STATES[@]}"; do
-    for other in "$state_dir"/*.meta; do
-      [ -f "$other" ] && [ ! -L "$other" ] || continue
-      if [ -n "$record_meta" ] && [ "${other##*/}" = "${record_meta##*/}" ] \
-         && [ "$other" -ef "$record_meta" ]; then
+    for record_file in "$state_dir"/*.meta; do
+      [ -f "$record_file" ] && [ ! -L "$record_file" ] || continue
+      if [ -n "$record_meta" ] && [ "${record_file##*/}" = "${record_meta##*/}" ] \
+         && [ "$record_file" -ef "$record_meta" ]; then
         continue
       fi
       for field in worktree home; do
-        path=$(fm_meta_get "$other" "$field")
+        path=$(fm_meta_get "$record_file" "$field")
         [ -n "$path" ] || continue
         dir=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || continue
-        printf '%s\t%s\t%s\n' "$(basename "$other" .meta)" "$field" "$dir"
+        printf '%s\t%s\t%s\n' "$(basename "$record_file" .meta)" "$field" "$dir"
       done
     done
   done
