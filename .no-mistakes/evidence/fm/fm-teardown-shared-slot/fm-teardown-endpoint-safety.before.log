@@ -1,0 +1,30 @@
+ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
+ok - fm-teardown: a concurrent lifecycle action refuses before mutation
+ok - fm-teardown: non-pool cleanup ignores unrelated task publication locks
+ok - fm-teardown: destructive cleanup serializes with metadata writers
+ok - cleanup identity: valid tmux, Herdr, Zellij, Orca, and cmux records validate while every empty backend target refuses
+ok - cleanup identity: an Orca record's real composite worktree id validates while a separatorless or newline-carrying id refuses
+ok - tmux backend: direct empty target returns nonzero without invoking tmux
+ok - process cleanup: creation-time PID identity removes only the exact child and preserves the control child
+ok - fm-teardown: exact tmux cleanup preserves invalid and prefix-matched neighbors while removing only the recorded target
+ok - fm-teardown: a close that genuinely failed refuses and keeps the record naming the surviving endpoint, and the same teardown finishes once the close works
+ok - fm-teardown: --force continues past a close it could not make while still reporting it, and the same case refuses without --force
+ok - fm-teardown: a close re-read that could not run refuses, while a definitively absent session or server still completes silently
+ok - fm-teardown: forced secondmate cleanup still refuses on a child endpoint close that failed
+ok - fm-teardown: an Orca close its missing CLI never attempted refuses even under --force, keeping the record naming the terminal
+ok - fm-teardown: an already-exited endpoint, and a server that is already gone, still complete cleanup silently
+ok - Treehouse locking resolves a bare local origin against its source project, matching the provisioned clone
+ok - fm-teardown: a pool slot named by a second task record is never returned, killed, or reset
+ok - fm-teardown: a pool slot held by another firstmate home is never returned
+ok - fm-teardown: a task that solely holds its slot still returns it
+ok - fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes
+not ok - teardown of finished-scout-a, whose shared slot is claimed by another task, was refused: ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  4 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: task finished-scout-a's recorded worktree /tmp/fm-teardown-endpoint-safety.NCzYlx/slot-shared-by-four/pool/1/project is also task dead-scout's recorded worktree.
+Returning that pool slot would kill dead-scout's processes and reset its copy, so nothing was changed - not even with --force.
+Reconcile whichever record is wrong (bin/fm-crew-state.sh finished-scout-a; bin/fm-crew-state.sh dead-scout), then re-run teardown.

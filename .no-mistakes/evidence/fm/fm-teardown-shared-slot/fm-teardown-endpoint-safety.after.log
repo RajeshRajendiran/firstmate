@@ -1,0 +1,27 @@
+ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
+ok - fm-teardown: a concurrent lifecycle action refuses before mutation
+ok - fm-teardown: non-pool cleanup ignores unrelated task publication locks
+ok - fm-teardown: destructive cleanup serializes with metadata writers
+ok - cleanup identity: valid tmux, Herdr, Zellij, Orca, and cmux records validate while every empty backend target refuses
+ok - cleanup identity: an Orca record's real composite worktree id validates while a separatorless or newline-carrying id refuses
+ok - tmux backend: direct empty target returns nonzero without invoking tmux
+ok - process cleanup: creation-time PID identity removes only the exact child and preserves the control child
+ok - fm-teardown: exact tmux cleanup preserves invalid and prefix-matched neighbors while removing only the recorded target
+ok - fm-teardown: a close that genuinely failed refuses and keeps the record naming the surviving endpoint, and the same teardown finishes once the close works
+ok - fm-teardown: --force continues past a close it could not make while still reporting it, and the same case refuses without --force
+ok - fm-teardown: a close re-read that could not run refuses, while a definitively absent session or server still completes silently
+ok - fm-teardown: forced secondmate cleanup still refuses on a child endpoint close that failed
+ok - fm-teardown: an Orca close its missing CLI never attempted refuses even under --force, keeping the record naming the terminal
+ok - fm-teardown: an already-exited endpoint, and a server that is already gone, still complete cleanup silently
+ok - Treehouse locking resolves a bare local origin against its source project, matching the provisioned clone
+ok - fm-teardown: a pool slot named by a second task record is never returned, killed, or reset
+ok - fm-teardown: a pool slot held by another firstmate home is never returned
+ok - fm-teardown: a task that solely holds its slot still returns it
+ok - fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes
+ok - fm-teardown: every record on a shared pool slot that the claim proves is not the owner finishes its own cleanup, leaving the slot to its owner
+ok - fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down
+ok - fm-teardown: an exact recorded endpoint still tears down after changing cwd outside its worktree
+ok - Treehouse project locking anchors at the local root for main-home, local-secondmate, and remote-seeded layouts
+ok - fm-teardown: a remote-seeded secondmate home returns its own uncontested pool slot
+ok - fm-teardown: slot ownership across a remote-seeded home and its local child still refuses
+ok - Treehouse project locking still serializes two homes across the remote-seeded boundary
