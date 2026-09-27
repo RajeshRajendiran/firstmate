@@ -866,7 +866,7 @@ resolve_relaunch_profile() {
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
 safe_checkpoint() {
-  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
+  local wt_real wt_top wt_top_real project head head_ref head_ref_status status_output dirty children marker child_meta
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
@@ -876,6 +876,13 @@ safe_checkpoint() {
   wt_top_real=$(cd "$wt_top" 2>/dev/null && pwd -P) || wt_top_real=$wt_top
   [ "$wt_real" = "$wt_top_real" ] \
     || die "task $ID's recorded worktree $WT is not a worktree root (root is $wt_top); refusing to relaunch against an ambiguous checkout"
+  # A pool slot must still be this task's alone before the old agent stops; the
+  # launch owner (bin/fm-spawn.sh --relaunch) re-checks it at launch.
+  project=$(fm_meta_get "$META" project)
+  if [ "$KIND" != secondmate ] && [ -n "$project" ] && fm_treehouse_pool_slot "$project" "$WT" \
+     && ! fm_treehouse_slot_relaunch_check "$META" "$ID" "$STATE" "$WT"; then
+    exit 1
+  fi
   if head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null); then
     :
   elif head_ref=$(git -C "$WT" symbolic-ref -q HEAD 2>/dev/null); then
