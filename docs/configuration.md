@@ -186,7 +186,7 @@ These are the bounds set by the captain-approved architecture.
 Every existing captain gate remains unchanged in either posture.
 Homes on other primary harnesses do not load the Pi branch extension; shared per-task lease behavior is owned by `bin/fm-lease-lib.sh`.
 
-`AGENTS.md`'s `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
+The `operational-home-layout` skill's `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
 
 ### Outcome delivery and acknowledgement
 
@@ -1462,7 +1462,7 @@ FM_TELEGRAM_CAPTAIN_CHAT_ID=  # the captain's chat id
 
 `FM_TELEGRAM_API_URL_PREFIX` (default `https://api.telegram.org`), `FM_TELEGRAM_POLL_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_TIMEOUT` (default 30 seconds), `FM_TELEGRAM_SEND_RATE_LIMIT` (default 1 second between chunks), and `FM_TELEGRAM_POLL_MAX_WAKES` (default 20, valid 1..200) are optional.
 
-The state files are written only by `bin/fm-telegram.sh`; the AGENTS.md `state/` layout owns their inventory.
+The state files are written only by `bin/fm-telegram.sh`; the `operational-home-layout` skill's `state/` layout owns their inventory.
 A handled Telegram message is acknowledged by moving its record from `state/telegram/<update_id>.json` to `state/telegram/handled/<update_id>.json`.
 Background response attempts are audited as private JSON records under `state/telegram/responses/`; a `sending` or uncertain result is never retried automatically, preventing duplicate replies while leaving the durable wake for firstmate.
 
