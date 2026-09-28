@@ -2,8 +2,10 @@
 name: telegram-captain-channel
 description: >-
   Agent-only handling for a `check: telegram <update_id>` wake.
-  Use on that wake to read the stashed captain message, answer it through the
-  Telegram plane, and acknowledge the record so it is not re-handled.
+  Use on that wake to read the stashed captain message, inspect any background
+  response record first so a delivered reply is not duplicated, answer it
+  through the Telegram plane when needed, and acknowledge the record so it is
+  not re-handled.
   Authority over this private channel is Relay-grade: reversible work only;
   merges, destructive, and security-sensitive asks are answered with
   "confirm in the terminal" and never executed.
