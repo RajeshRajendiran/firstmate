@@ -32,6 +32,13 @@
 #      a process view naming agy is live and refuses replacement, a registered
 #      status over a proven shell-only pane is the explicit stale-agent state,
 #      and nothing short of that shared proof flips an agy pane to agent-free.
+#   8. agy's idle composer is a bare `>` (a shell glyph) between two rules, so
+#      the shared classifier proves it empty only under a live agy identity
+#      reporting idle AND agy's own rendered `? for shortcuts` hint below the
+#      closing rule. Either signal alone stays unknown, typed text stays
+#      unknown, and that proof is what lets fm-control exit (and therefore
+#      relaunch) type /quit into an idle agy worker on Herdr while a busy one
+#      is still interrupted first.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -350,7 +357,205 @@ test_herdr_malformed_and_failed_reads_stay_unknown() {
   pass "herdr exit detection: malformed and failed reads stay unknown"
 }
 
-make_agy_trust_case() {  # <name> -> "<case>|<proj>|<wt>|<home>"
+# The idle agy pane as recorded byte-level (docs/verification/agy.md
+# "Composer"): a bare unstyled `>` between two full-width `─` rules, then an
+# unstyled `? for shortcuts` cell and a dim (SGR 2) model cell. <prompt> and
+# <footer> replace the composer row and the hint row to drive the signals
+# apart.
+agy_rule() { printf '─%.0s' $(seq 1 78); }
+agy_screen() {  # [prompt-row] [footer-row]
+  local prompt=${1:->} footer=${2-$'? for shortcuts                                                         \e[2mGemini 3.8 Flash · low\e[0m'}
+  printf 'Done. 80235\n\n%s\n%s\n%s\n%s\n' "$(agy_rule)" "$prompt" "$(agy_rule)" "$footer"
+}
+agy_busy_footer=$'esc to cancel                                                           \e[2mGemini 3.8 Flash · low\e[0m'
+AGY_HERDR_CAPS=$'styled=1\ncursor=0\nidentity=1'
+
+test_agy_idle_composer_is_empty_only_with_identity_and_hint() {
+  local got
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen)")
+  [ "$got" = need-identity ] || fail "an identity-capable read of agy's idle shape must ask for identity, got '$got'"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen)" '' $'agy\tidle')
+  [ "$got" = empty ] || fail "agy idle identity plus the idle hint must prove empty, got '$got'"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen)" '' $'agy\tdone')
+  [ "$got" = empty ] || fail "agy done identity plus the idle hint must prove empty, got '$got'"
+  got=$(fm_composer_classify_screen $'styled=0\ncursor=0\nidentity=1' "$(agy_screen)" '' $'agy\tidle')
+  [ "$got" = empty ] || fail "an unstyled capture of the same lone prompt must still prove empty, got '$got'"
+  pass "fm-composer-lib: agy's idle composer is empty under a live idle agy identity and its idle hint"
+}
+
+test_agy_idle_proof_needs_both_signals() {
+  local got screen
+  screen=$(agy_screen)
+  # Native idle but the rendered busy row: the two sources disagree, and the
+  # divergence itself must be real so this case cannot go quietly vacuous.
+  printf '%s\n' "$(agy_screen '>' "$agy_busy_footer")" | fm_busy_agy_tail_busy \
+    || fail "the divergence fixture must actually render agy's busy row"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen '>' "$agy_busy_footer")" '' $'agy\tidle')
+  [ "$got" = unknown ] || fail "a native idle read over agy's busy row must stay unknown, got '$got'"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen '>' '')" '' $'agy\tidle')
+  [ "$got" = unknown ] || fail "a native idle read with no idle hint must stay unknown, got '$got'"
+  # The rendered hint but a native read that is not idle, absent, or another agent.
+  for id in $'agy\tworking' $'agy\tblocked' probe-absent $'claude\tidle'; do
+    got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$screen" '' "$id")
+    [ "$got" = unknown ] || fail "the idle hint under identity '$id' must stay unknown, got '$got'"
+  done
+  got=$(fm_composer_classify_screen $'styled=1\ncursor=0\nidentity=0' "$screen")
+  [ "$got" = unknown ] || fail "a backend with no identity probe must keep agy's shape unknown, got '$got'"
+  pass "fm-composer-lib: agy's empty proof needs the native idle read and the rendered hint together"
+}
+
+test_agy_composer_with_text_or_extra_rows_stays_unknown() {
+  local got
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen '> fix the failing test')" '' $'agy\tidle')
+  [ "$got" = unknown ] || fail "typed text behind agy's prompt must never read empty, got '$got'"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen $'>\nsecond line')" '' $'agy\tidle')
+  [ "$got" = unknown ] || fail "a multi-row agy composer must never read empty, got '$got'"
+  got=$(fm_composer_classify_screen "$AGY_HERDR_CAPS" "$(agy_screen '$')" '' $'agy\tidle')
+  [ "$got" = unknown ] || fail "a row that is not agy's prompt must never read empty, got '$got'"
+  pass "fm-composer-lib: agy composer text, extra rows, and foreign prompts stay unknown"
+}
+
+# The Herdr adapter end to end: the lazy identity probe is what supplies the
+# native half of the proof.
+agy_herdr_composer_state() {  # <screen-file> <agent-get-json-file>
+  AGY_FIX_SCREEN="$1" AGY_FIX_RESP="$2" bash -c '
+    . "$0/bin/fm-composer-lib.sh"
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_cli() {
+      case "$*" in
+        *"pane read"*) cat "$AGY_FIX_SCREEN" ;;
+        *"agent get"*) cat "$AGY_FIX_RESP" ;;
+        *) exit 0 ;;
+      esac
+    }
+    fm_backend_herdr_composer_state testsession:w9:p1' "$ROOT" 2>&1
+}
+
+test_agy_herdr_composer_state_uses_the_native_idle_read() {
+  local dir got
+  dir="$TMP_ROOT/herdr-composer"; mkdir -p "$dir"
+  agy_screen > "$dir/screen"
+  printf '%s\n' '{"result":{"agent":{"agent":"agy","agent_status":"idle","pane_id":"w9:p1"}}}' > "$dir/idle.json"
+  printf '%s\n' '{"result":{"agent":{"agent":"agy","agent_status":"working","pane_id":"w9:p1"}}}' > "$dir/working.json"
+  got=$(agy_herdr_composer_state "$dir/screen" "$dir/idle.json")
+  [ "$got" = empty ] || fail "herdr must read an idle agy composer empty, got '$got'"
+  got=$(agy_herdr_composer_state "$dir/screen" "$dir/working.json")
+  [ "$got" = unknown ] || fail "herdr must keep a working agy composer unknown, got '$got'"
+  pass "herdr composer state: agy reads empty from the native idle read plus the rendered hint"
+}
+
+# fm-control exit and relaunch on Herdr, through the executable. The canned
+# herdr models one agy pane: `agent get` reports agy at FM_FAKE_AGY_STATUS
+# until /quit is typed, after which the pane holds only a shell.
+make_agy_control_case() {  # <name> <id> -> echoes case dir
+  local dir="$TMP_ROOT/control-$1" id=$2 fb
+  fb="$dir/fakebin"
+  mkdir -p "$dir/home/state" "$dir/home/data/$id" "$dir/fake" "$fb"
+  fm_git_worktree "$dir/proj" "$dir/wt" "task-$id"
+  printf '# brief for %s\n' "$id" > "$dir/home/data/$id/brief.md"
+  {
+    echo "window=fmlab:w9:p1"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$dir/wt"
+    echo "project=$dir/proj"
+    echo "harness=agy"
+    echo "kind=ship"
+    echo "mode=no-mistakes"
+    echo "yolo=off"
+    echo "model=default"
+    echo "effort=default"
+    echo "backend=herdr"
+    echo "herdr_session=fmlab"
+    echo "herdr_workspace_id=ws1"
+    echo "herdr_tab_id=tab1"
+    echo "herdr_pane_id=w9:p1"
+  } > "$dir/home/state/$id.meta"
+  printf '%s' "$dir/wt" > "$dir/fake/cwd"
+  agy_screen > "$dir/fake/screen"
+  : > "$dir/fake/herdr-log"
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+set -u
+D=$FM_FAKE_DIR
+printf '%s\n' "$*" >> "$D/herdr-log"
+case "${1:-} ${2:-}" in
+  'status --json') printf '{"client":{"version":"0.9.0","protocol":22},"server":{"running":true}}\n' ;;
+  'pane get') printf '{"result":{"pane":{"pane_id":"%s","foreground_cwd":"%s"}}}\n' "${3:-}" "$(cat "$D/cwd")" ;;
+  'agent get')
+    if [ -f "$D/quit" ]; then
+      printf '{"error":{"code":"agent_not_found"}}\n'
+    else
+      printf '{"result":{"agent":{"agent":"agy","agent_status":"%s","pane_id":"w9:p1"}}}\n' "$FM_FAKE_AGY_STATUS"
+    fi ;;
+  'pane process-info')
+    if [ -f "$D/quit" ]; then
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w9:p1","shell_pid":4242,"foreground_processes":[]}}}\n'
+    else
+      printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"w9:p1","shell_pid":4242,"foreground_processes":[{"pid":4243,"name":"agy","argv":["agy"],"argv0":"agy","cmdline":"agy"}]}}}\n'
+    fi ;;
+  'pane read') cat "$D/screen" ;;
+  'pane send-text')
+    printf '%s\n' "${4:-}" >> "$D/typed"
+    [ "${4:-}" != /quit ] || : > "$D/quit" ;;
+  'pane send-keys') printf '%s\n' "${4:-}" >> "$D/keys" ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/herdr"
+  cat > "$fb/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  '-axo pid=,ppid=,comm=') printf '4242 1 bash\n' ;;
+  '-p 4242 -o args=') printf 'bash\n' ;;
+  *) exec /bin/ps "$@" ;;
+esac
+SH
+  chmod +x "$fb/ps"
+  printf '%s\n' "$dir"
+}
+
+run_agy_control() {  # <case-dir> <args...>
+  local dir=$1; shift
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    FM_FAKE_AGY_STATUS="${FM_FAKE_AGY_STATUS:-idle}" \
+    FM_CONTROL_POLL=0.05 FM_CONTROL_SETTLE_WAIT=0.2 \
+    FM_CONTROL_EXIT_WAIT=2 FM_CONTROL_LAUNCH_WAIT=0.2 \
+    "$ROOT/bin/fm-control.sh" "$@" 2>&1
+}
+
+test_agy_control_exit_stops_an_idle_worker_on_herdr() {
+  local dir out rc=0
+  command -v jq >/dev/null 2>&1 || { echo "skip - agy herdr exit needs jq (the herdr adapter parses JSON with it)"; return 0; }
+  dir=$(make_agy_control_case exit-idle agyx1)
+  out=$(run_agy_control "$dir" agyx1 exit) || rc=$?
+  [ "$rc" -eq 0 ] || fail "exit must stop an idle agy worker on herdr (rc=$rc): $out"
+  assert_contains "$out" "stopped" "exit must report the agy worker stopped"
+  [ "$(cat "$dir/fake/typed" 2>/dev/null)" = /quit ] \
+    || fail "exit must type exactly agy's /quit, typed: $(cat "$dir/fake/typed" 2>/dev/null)"
+  grep -qx Escape "$dir/fake/keys" 2>/dev/null \
+    && fail "an idle agy worker must not be interrupted before /quit" || true
+  pass "fm-control exit: an idle agy worker on herdr is stopped with /quit"
+}
+
+test_agy_control_exit_still_refuses_an_unproven_composer() {
+  local dir out rc=0
+  command -v jq >/dev/null 2>&1 || { echo "skip - agy herdr exit needs jq (the herdr adapter parses JSON with it)"; return 0; }
+  dir=$(make_agy_control_case exit-draft agyx2)
+  agy_screen '> half-typed draft' > "$dir/fake/screen"
+  out=$(run_agy_control "$dir" agyx2 exit) || rc=$?
+  [ "$rc" -ne 0 ] || fail "exit must refuse an agy composer holding text: $out"
+  assert_contains "$out" "not proven empty" "the refusal must name the unproven agy composer"
+  [ ! -s "$dir/fake/typed" ] || fail "no exit command may be typed onto an agy draft, typed: $(cat "$dir/fake/typed")"
+  dir=$(make_agy_control_case exit-busyrow agyx3)
+  agy_screen '>' "$agy_busy_footer" > "$dir/fake/screen"
+  out=$(run_agy_control "$dir" agyx3 exit) || rc=$?
+  [ "$rc" -ne 0 ] || fail "exit must refuse when agy renders its busy row despite a native idle read: $out"
+  [ ! -s "$dir/fake/typed" ] || fail "no exit command may be typed under agy's busy row, typed: $(cat "$dir/fake/typed")"
+  pass "fm-control exit: an agy composer that is not proven empty still refuses"
+}
+
+make_agy_trust_case() {  # <name> -> "<case>|<proj>|<wt>|<home>\"
   local name=$1 case_dir proj wt home
   case_dir="$TMP_ROOT/trust-$name"
   proj="$case_dir/project"
@@ -900,6 +1105,12 @@ test_herdr_registered_status_over_a_shell_only_pane_is_stale_not_live
 test_herdr_shell_first_with_live_registry_stays_live
 test_herdr_lone_unregistered_pane_is_agent_free
 test_herdr_malformed_and_failed_reads_stay_unknown
+test_agy_idle_composer_is_empty_only_with_identity_and_hint
+test_agy_idle_proof_needs_both_signals
+test_agy_composer_with_text_or_extra_rows_stays_unknown
+test_agy_herdr_composer_state_uses_the_native_idle_read
+test_agy_control_exit_stops_an_idle_worker_on_herdr
+test_agy_control_exit_still_refuses_an_unproven_composer
 test_agy_launch_carries_the_brief_with_model_effort_and_autonomy
 test_agy_effort_xhigh_is_recorded_but_omitted
 test_agy_unlisted_model_refuses_before_pane_creation
