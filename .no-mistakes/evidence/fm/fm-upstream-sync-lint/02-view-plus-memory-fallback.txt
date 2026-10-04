@@ -1,0 +1,41 @@
+### A. Bounded (CI-style) run: relative root, 512 MiB address-space cap, real ShellCheck 0.11.0
+$ FM_LINT_REQUIRE_BOUNDS=1 FM_LINT_ROOT_MEMORY_KIB=524288 bin/fm-lint.sh --jobs 1 --telemetry lint.tsv bin/fm-wake-lib.sh
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint: bin/fm-wake-lib.sh hit the memory ceiling with --external-sources (reason=memory rc=251); retried without it; fallback passed with cross-file codes excluded (SC1091,SC2034,SC2153,SC2329)
+exit=0
+--- ShellCheck invocations (cwd + flags), in order:
+cwd=/tmp/fm-lint.TwnNEN/output/view.0 flags=--norc --external-sources -- bin/fm-wake-lib.sh
+cwd=<worktree> flags=--norc --exclude=SC1091,SC2034,SC2153,SC2329 -- bin/fm-wake-lib.sh
+--- roots sidecar:
+meta	bounds_enforced	1
+meta	root_memory_limit_kib	524288
+end	1	bin/fm-wake-lib.sh	0	full	1791096498832	1791096506365	7533	0	memory-fallback	unavailable	0
+meta	result_exit	0
+--- telemetry:
+source_directives	5
+source_followed_directives	0
+result_exit	0
+
+### B. Unbounded (local) run: same root, the real ShellCheck process itself capped at 512 MiB by the shim
+$ bin/fm-lint.sh --jobs 1 --telemetry lint.tsv bin/fm-wake-lib.sh
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint: bin/fm-wake-lib.sh hit the memory ceiling with --external-sources (reason=memory rc=251); retried without it; fallback passed with cross-file codes excluded (SC1091,SC2034,SC2153,SC2329)
+exit=0
+--- ShellCheck invocations (cwd + flags), in order:
+cwd=/tmp/fm-lint.9axGjo/output/view.0 flags=--norc --external-sources -- bin/fm-wake-lib.sh
+cwd=<worktree> flags=--norc --exclude=SC1091,SC2034,SC2153,SC2329 -- bin/fm-wake-lib.sh
+--- roots sidecar:
+meta	bounds_enforced	0
+end	1	bin/fm-wake-lib.sh	0	full	1791096506691	1791096514081	7390	0	memory-fallback	unavailable	0
+meta	result_exit	0
+
+### C. Control: same root, default 12 GiB cap - no fallback, sources followed in the view
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
+cwd=/tmp/fm-lint.PT1uEq/output/view.0 flags=--norc --external-sources -- bin/fm-wake-lib.sh
+end	1	bin/fm-wake-lib.sh	0	full	1791096516558	1791096523699	7141	0	ok	unavailable	1
+--- leftover view dirs / scratch:
+0

@@ -1,0 +1,62 @@
+### D. Adversarial: a relative root with a real defect (unquoted rm target, SC2086) that sources a heavy library
+--- fixture: copy of this worktree bin/ plus bin/zz-defect.sh:
+#!/usr/bin/env bash
+# shellcheck source=bin/fm-wake-lib.sh
+. bin/fm-wake-lib.sh
+target=$1
+rm -r $target
+
+$ FM_LINT_REQUIRE_BOUNDS=1 FM_LINT_ROOT_MEMORY_KIB=524288 bin/fm-lint.sh --jobs 1 bin/zz-defect.sh   # memory fallback must NOT hide the defect
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+fm-lint: bin/zz-defect.sh hit the memory ceiling with --external-sources (reason=memory rc=251); retried without it; fallback reason=findings rc=1
+
+In bin/zz-defect.sh line 5:
+rm -r $target
+      ^-----^ SC2086 (info): Double quote to prevent globbing and word splitting.
+
+Did you mean:
+rm -r "$target"
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2086 -- Double quote to prevent globbing ...
+exit=1
+cwd=/tmp/fm-lint.EE36qa/output/view.0 flags=--norc --external-sources -- bin/zz-defect.sh
+cwd=<fixture> flags=--norc --exclude=SC1091,SC2034,SC2153,SC2329 -- bin/zz-defect.sh
+end	1	bin/zz-defect.sh	0	full	1791096538232	1791096543474	5242	1	findings	unavailable	0
+
+$ bin/fm-lint.sh --jobs 4 bin/zz-defect.sh   # default cap, source view on
+exit=1
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+
+In bin/zz-defect.sh line 5:
+rm -r $target
+      ^-----^ SC2086 (info): Double quote to prevent globbing and word splitting.
+
+Did you mean:
+rm -r "$target"
+
+For more information:
+  https://www.shellcheck.net/wiki/SC2086 -- Double quote to prevent globbing ...
+
+$ FM_LINT_DEDUPE_SOURCES=0 bin/fm-lint.sh --jobs 1 bin/zz-defect.sh   # view off, one worker
+exit=1
+diagnostics byte-identical with and without the source view, and at 4 vs 1 workers
+
+### E. Worker bound
+$ bin/fm-lint.sh --jobs 4 bin/fm-lint.sh
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: full ShellCheck extended analysis enabled
+exit=0
+$ bin/fm-lint.sh --jobs 5 bin/fm-lint.sh
+fm-lint.sh: jobs must be between 1 and 4, got 5.
+exit=2
+$ bin/fm-lint.sh --jobs 0 bin/fm-lint.sh
+fm-lint.sh: jobs must be between 1 and 4, got 0.
+exit=2
+$ bin/fm-lint.sh --help | grep -n -E "jobs|memory failure|retried once"
+28:    on a local diff; memory failures may take the narrower retry below.
+78:If a source-following root exits with a memory failure, it is retried once
+81:memory failure stands without a retry. A clean retry passes
+112:  fm-lint.sh --jobs <1-4> [path]...  override concurrent worker count

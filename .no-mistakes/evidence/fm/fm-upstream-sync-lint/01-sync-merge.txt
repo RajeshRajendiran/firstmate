@@ -1,0 +1,26 @@
+$ git merge-tree --write-tree --name-only 9601909 e31bc6e   # BEFORE: fork main vs upstream/main
+d7d7f6cf44ef8fc9579f1bcc1f03f52e00ff3fae
+bin/fm-lint.sh
+docs/fm-test-portable-shards.md
+
+Auto-merging bin/fm-lint.sh
+CONFLICT (content): Merge conflict in bin/fm-lint.sh
+Auto-merging bin/fm-wake-lib.sh
+Auto-merging docs/configuration.md
+Auto-merging docs/fm-test-portable-shards.md
+CONFLICT (content): Merge conflict in docs/fm-test-portable-shards.md
+Auto-merging tests/fm-lint.test.sh
+exit=1
+
+$ git merge-tree --write-tree --name-only 2909183 e31bc6e   # AFTER: this change vs upstream/main
+86d338a8db7d12c8c6b1ff084e04e37ac62c9ba9
+exit=0
+
+$ git merge-base --is-ancestor e31bc6e 2909183 (upstream/main contained)
+exit=0
+$ git merge-base --is-ancestor 9601909 2909183 (fork main fast-forwards)
+exit=0
+$ git rev-list --count 2909183..e31bc6e (upstream commits still missing)
+0
+$ git grep -nE "^(<<<<<<<|=======|>>>>>>>)( |$)" 2909183 -- bin/fm-lint.sh docs/fm-test-portable-shards.md tests/fm-lint.test.sh
+exit=1 (1 = no markers)

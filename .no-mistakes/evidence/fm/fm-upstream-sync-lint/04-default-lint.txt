@@ -1,0 +1,14 @@
+$ bin/fm-lint.sh --list-files   # default context-selected set on this branch
+bin/fm-lint.sh
+bin/fm-wake-lib.sh
+tests/fm-lint.test.sh
+tests/fm-pi-watch-extension.test.sh
+tests/fm-watch-arm.test.sh
+exit=0
+
+$ bin/fm-lint.sh   # default run (what the gate lint step invokes)
+fm-lint.sh: ShellCheck 0.11.0 (pinned 0.11.0)
+fm-lint.sh: local changed-file mode; ShellCheck source following disabled
+fm-lint-workflows.sh: actionlint 1.7.12 (pinned 1.7.12)
+fm-lint-workflows.sh: 3 workflow files valid
+exit=0 wall=5s
