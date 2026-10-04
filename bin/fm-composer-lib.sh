@@ -129,8 +129,9 @@
 # genuine empty agent composer ONLY inside a bordered container, or as agy's
 # `>` inside a separated pair under a live idle agy identity (the separated
 # entry above). On a bare row it is a dead-shell prompt and classifies
-# `unknown` (never a safe injection target). A `$` followed immediately by a digit is Pi's cost footer, not this
-# prompt (`FM_COMPOSER_PI_STATUS_RE_DEFAULT`).
+# `unknown` (never a safe injection target). A `$` followed immediately by a
+# digit is Pi's cost footer, not this prompt
+# (`FM_COMPOSER_PI_STATUS_RE_DEFAULT`).
 # The AGENT glyphs `❯` (claude), `›` (codex), `⟩` (U+27E9, muse),
 # `→` (U+2192, cursor), and `❭` (U+276D, devin) are a genuine empty agent
 # composer either way.
@@ -1889,6 +1890,8 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # is drawn above the separator pair, so the composer region looks free while the
 # keys would answer the prompt instead of composing (issue #2797). Structure
 # cannot disprove that, so a blocked pi defers rather than claiming empty.
+# A live agy identity over the same pair is handed to _fm_composer_agy_verdict
+# below, behind the same identity gates.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
