@@ -549,13 +549,13 @@ test_agy_control_exit_still_refuses_an_unproven_composer() {
   [ ! -s "$dir/fake/typed" ] || fail "no exit command may be typed onto an agy draft, typed: $(cat "$dir/fake/typed")"
   dir=$(make_agy_control_case exit-busyrow agyx3)
   agy_screen '>' "$agy_busy_footer" > "$dir/fake/screen"
-  out=$(run_agy_control "$dir" agyx3 exit) || rc=$?
+  rc=0; out=$(run_agy_control "$dir" agyx3 exit) || rc=$?
   [ "$rc" -ne 0 ] || fail "exit must refuse when agy renders its busy row despite a native idle read: $out"
   [ ! -s "$dir/fake/typed" ] || fail "no exit command may be typed under agy's busy row, typed: $(cat "$dir/fake/typed")"
   pass "fm-control exit: an agy composer that is not proven empty still refuses"
 }
 
-make_agy_trust_case() {  # <name> -> "<case>|<proj>|<wt>|<home>\"
+make_agy_trust_case() {  # <name> -> "<case>|<proj>|<wt>|<home>"
   local name=$1 case_dir proj wt home
   case_dir="$TMP_ROOT/trust-$name"
   proj="$case_dir/project"
