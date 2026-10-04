@@ -73,6 +73,14 @@
 #                get`; the tmux foreground-process probe), because a blank
 #                region between two transcript rules is otherwise exactly the
 #                strict rule's unidentifiable blank row.
+#                agy (Antigravity CLI) draws the same pair around a bare `>`,
+#                a SHELL glyph, so it rides the same identity conjunction:
+#                only a live agy identity proves that `>` is agy's prompt
+#                rather than a dead shell between two transcript rules, and
+#                an `empty` verdict additionally needs agy's own rendered
+#                idle hint (FM_COMPOSER_AGY_IDLE_HINT_RE) on the row directly
+#                below the closing rule, so neither the native status nor the
+#                screen carries the verdict alone.
 #                A separated pair that closes over a bare AGENT-GLYPH row is a
 #                different, self-proving thing: real claude 2.x draws exactly
 #                that (`─` rule, `❯`+NBSP, `─` rule), so the glyph inside the
@@ -118,10 +126,12 @@
 #
 # THE SAFETY RULE for glyphs: a bare shell prompt glyph (`>` `$` `%` `#`) -
 # what a pane shows once its agent has exited to a plain login shell - is a
-# genuine empty agent composer ONLY inside a bordered container. On a bare row
-# it is a dead-shell prompt and classifies `unknown` (never a safe injection
-# target). A `$` followed immediately by a digit is Pi's cost footer, not this
-# prompt (`FM_COMPOSER_PI_STATUS_RE_DEFAULT`).
+# genuine empty agent composer ONLY inside a bordered container, or as agy's
+# `>` inside a separated pair under a live idle agy identity (the separated
+# entry above). On a bare row it is a dead-shell prompt and classifies
+# `unknown` (never a safe injection target). A `$` followed immediately by a
+# digit is Pi's cost footer, not this prompt
+# (`FM_COMPOSER_PI_STATUS_RE_DEFAULT`).
 # The AGENT glyphs `❯` (claude), `›` (codex), `⟩` (U+27E9, muse),
 # `→` (U+2192, cursor), and `❭` (U+276D, devin) are a genuine empty agent
 # composer either way.
@@ -508,6 +518,14 @@ FM_COMPOSER_OMP_STATUS_RE_DEFAULT='^[[:space:]]*(π|󰵗)[[:space:]]+·[[:space:
 # Consulted only as the dead-shell exception below, never as composer content,
 # so the same string typed between the separator pair still reads pending.
 FM_COMPOSER_PI_STATUS_RE_DEFAULT='^\$[0-9]+(\.[0-9]+)?([[:space:]]|$)'
+# agy (Antigravity CLI) replaces its pinned `esc to cancel` busy row with this
+# idle hint row directly below its composer's closing rule once a turn settles
+# (verified live, agy 1.2.0 through Herdr; docs/verification/agy.md). It is the
+# rendered half of agy's separated-shape `empty` proof, consulted only on that
+# one row and only under a live agy identity. Hardcoded with no environment
+# override, like the agy busy signature, so a stray variable can never turn a
+# busy agy composer into a typing target.
+FM_COMPOSER_AGY_IDLE_HINT_RE='^\? for shortcuts([[:space:]]|$)'
 # Braille-pattern cells (U+2800..U+28FF) are animation furniture: codex-cli
 # 0.154.0 draws an idle "starfield" of them on the row above its `›` prompt
 # row, on the `›` row itself after the dim `Ask Codex to do anything`
@@ -1872,6 +1890,8 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
 # is drawn above the separator pair, so the composer region looks free while the
 # keys would answer the prompt instead of composing (issue #2797). Structure
 # cannot disprove that, so a blocked pi defers rather than claiming empty.
+# A live agy identity over the same pair is handed to _fm_composer_agy_verdict
+# below, behind the same identity gates.
 _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   local screen=$1 styled=$2 has_identity=$3 identity=$4 agent agent_status state
   if [ "$has_identity" != 1 ]; then
@@ -1888,6 +1908,10 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   fi
   agent=${identity%%$'\t'*}
   agent_status=${identity#*$'\t'}
+  if [ "$agent" = agy ] && [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" = 1 ]; then
+    _fm_composer_agy_verdict "$screen" "$styled" "$agent_status"
+    return 0
+  fi
   if [ "$agent" != pi ] || [ "$FM_COMPOSER_SCAN_PI_PAIR_VALID" != 1 ]; then
     printf 'unknown'
     return 0
@@ -1895,6 +1919,36 @@ _fm_composer_pi_verdict() {  # <screen> <styled> <has_identity> <identity>
   state=$(_fm_composer_classify_pi_rows "$screen" "$styled")
   if [ "$state" = pending ]; then
     printf 'pending'
+    return 0
+  fi
+  case "$agent_status" in
+    idle|done) printf 'empty' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# The agy separated-shape verdict, reached only under a live agy identity.
+# It proves `empty` and nothing else: a lone `>` as the pair's only row, agy's
+# idle hint on the row directly below the closing rule, and an idle/done
+# native status. Anything short of that whole conjunction - including typed
+# text behind the `>` - stays unknown, so every caller that read agy's
+# composer as unknown before keeps exactly that behavior outside the proven
+# idle shape. (A `pending` verdict would make the doorbell defer on its own
+# swallowed line, which fm_composer_extract_selected_content cannot strip of
+# agy's shell-glyph prompt.)
+_fm_composer_agy_verdict() {  # <screen> <styled> <agent-status>
+  local screen=$1 styled=$2 agent_status=$3 raw content hint
+  if [ "$FM_COMPOSER_SCAN_PI_CLOSE" -ne "$((FM_COMPOSER_SCAN_PI_OPEN + 2))" ]; then
+    printf 'unknown'
+    return 0
+  fi
+  raw=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_OPEN + 1))" "$screen")
+  content=$(_fm_composer_row_content "$raw" "$styled")
+  hint=$(_fm_composer_screen_row "$((FM_COMPOSER_SCAN_PI_CLOSE + 1))" "$screen" | fm_composer_strip_ansi)
+  fm_composer_normalize_trim_var hint
+  if [ "$content" != '>' ] \
+     || ! printf '%s\n' "$hint" | grep -Eq -- "$FM_COMPOSER_AGY_IDLE_HINT_RE"; then
+    printf 'unknown'
     return 0
   fi
   case "$agent_status" in

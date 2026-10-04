@@ -135,10 +135,14 @@ Herdr tracks agy natively (`antigravity-cli` integration, detected as `agent=agy
 The tmux adapter classifies the anchored process name `agy` as `agent` through the shared name vocabulary in `bin/fm-agent-process-lib.sh`, the muse/omp precedent for short bare-word names.
 agy stays out of the session-lock name vocabulary in `bin/fm-session-lock-lib.sh`, where the other crewmate-only adapters are also absent.
 
-## Composer: unknown by design
+## Composer: empty only under a native idle read
 
 Byte-level capture of the idle pane shows a bare unstyled `>` between two full-width `─` rules, with an unstyled `? for shortcuts` cell and a dim (`SGR 2`) model cell in the status row below.
-The shared classifier reads that bare `>` as `unknown` under the dead-shell rule, never `empty`.
+On its own that bare `>` is a shell glyph, so the dead-shell rule keeps it `unknown`.
+`bin/fm-composer-lib.sh` proves it `empty` only through the separated-shape identity conjunction: a lone `>` as the pair's only row, the `? for shortcuts` hint directly below the closing rule, and a native agy identity reporting `idle` or `done`, which only Herdr's `agent get` supplies (recorded above as `agent_status=idle` after a turn).
+Every other agy composer shape - typed text, extra rows, the pinned `esc to cancel` row, a `working` status, or a backend with no agy identity probe such as tmux - stays `unknown`.
+That `empty` is what lets `bin/fm-control.sh exit`, and therefore `relaunch`, type `/quit` into an idle agy worker on Herdr instead of refusing every agy worker.
+`tests/fm-agy-harness.test.sh` pins the conjunction against the recorded capture and drives `fm-control exit` through a canned Herdr, and the live guard below asserts the rendered half on a real settled pane.
 Steering still confirms delivery: the Herdr submit core leads with the native `idle`-to-`working` transition, which agy performs, and the delivery footer regex covers the tmux path.
 agy renders the busy footer late for that confirm loop - about 1.5 s after Enter for a short steer and 4-5 s for a realistic longer brief, measured live on `agy 1.2.1` (2026-09-12) against the shared budget's 3 x 0.4 s - so `bin/fm-send.sh` gives agy typed targets a longer default submit-confirm budget (20 retries, about 8 s at the default cadence); an explicit `FM_SEND_RETRIES` still wins and every other harness keeps the shared 3-retry default.
 `tests/fm-send-agy-confirm.test.sh` pins the raised default and `tests/fm-agy-harness.test.sh` pins the Herdr transition path.
@@ -159,6 +163,7 @@ The unauthenticated failure mode was never observed; this host's agy runs signed
 No slash-skill invocation form was verified, so skill invocation stays natural language.
 `--continue` and `--conversation` resume were never exercised; recovery uses deterministic relaunch from the brief on disk.
 No primary or secondmate behavior was built or tested, and none is claimed.
+The empty-composer proof was derived from the recorded idle capture above; the live guard's rendered-half assertion and a real Herdr `fm-control exit` of an idle agy worker have not yet been run against it, nor has the screen of a quota-exhausted agy been captured.
 
 ## Refreshing this record
 

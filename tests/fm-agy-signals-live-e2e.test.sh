@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Live drift guard for the Antigravity CLI adapter's vendor-controlled surface:
-# process name, trust dialog, rendered busy/interrupt/exit behavior.
+# process name, trust dialog, rendered busy/idle-composer/interrupt/exit
+# behavior.
 # Opt-in because it submits real prompts (no echo provider exists for agy).
 set -u
 
@@ -135,6 +136,15 @@ printf '%s' "$screen" | grep -v '^[[:space:]]*$' | tail -12 | fm_busy_lines_matc
   && fail "harness=agy matched its own idle footer as busy" || true
 printf '%s' "$screen" | fm_busy_agy_tail_busy \
   && fail "the settled agy footer still matches the busy signature" || true
+# The rendered half of agy's empty-composer proof, read from the styled
+# viewport exactly as the Herdr adapter reads it; Herdr's native `idle` status
+# (docs/verification/agy.md) supplies the identity half, so it is fed here as
+# the probe result. fm-control exit types /quit only on this `empty`.
+idle_view=$("$REAL_TMUX" -L "$SOCKET" capture-pane -e -p -t "$TARGET" 2>/dev/null || true)
+verdict=$(fm_composer_classify_screen $'styled=1\ncursor=0\nidentity=1' "$idle_view" '' $'agy\tidle')
+[ "$verdict" = empty ] \
+  || fail "the real settled agy composer must classify empty under an idle agy identity, got '$verdict' (agy $("$AGY_BIN" --version 2>/dev/null | head -1))"
+pass "the real settled agy composer proves empty under an idle agy identity"
 
 # The dialog can outlive the turn it gated, so a still-rendered dialog must be
 # dismissed before steering anything: typed text would land in it instead of
