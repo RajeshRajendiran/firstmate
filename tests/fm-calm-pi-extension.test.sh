@@ -1662,8 +1662,10 @@ for (const { name, actual } of rows) {
 async function assertStockHtmlRendering(command, submitData) {
   editorText = command;
   terminalInputHandler(submitData);
+  const resolveToolDefinition = (name) => tools.find((tool) => tool.name === name);
   const htmlRenderer = createToolHtmlRenderer({
-    getToolDefinition: (name) => tools.find((tool) => tool.name === name),
+    getToolDefinition: resolveToolDefinition,
+    getToolRenderers: resolveToolDefinition,
     theme,
     cwd: process.cwd(),
   });
@@ -1693,8 +1695,10 @@ await assertStockHtmlRendering("/export calm.html", "\r");
 getKeybindings().setUserBindings({ "tui.input.submit": "alt+s" });
 editorText = "/export remapped.html";
 terminalInputHandler("\r");
+const resolveUnmatchedToolDefinition = (name) => tools.find((tool) => tool.name === name);
 const unmatchedRenderer = createToolHtmlRenderer({
-  getToolDefinition: (name) => tools.find((tool) => tool.name === name),
+  getToolDefinition: resolveUnmatchedToolDefinition,
+  getToolRenderers: resolveUnmatchedToolDefinition,
   theme,
   cwd: process.cwd(),
 });
