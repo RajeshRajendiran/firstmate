@@ -1,0 +1,5 @@
+ok - the real agy busy footer matches fm_busy_agy_tail_busy in flight
+ok - the real agy worker processed its launch prompt
+ok - the real settled agy composer proves empty under an idle agy identity
+ok - a single Escape cancels the real agy turn
+ok - /quit stops the real agy process

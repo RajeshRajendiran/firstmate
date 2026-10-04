@@ -1,0 +1,130 @@
+
+=== provision lab session fm-lab-agyexit-1160436-28767
+/tmp/fm-lab.plcvNX/home
+
+=== launch REAL agy 1.2.16 in lab pane fm-lab-agyexit-1160436-28767:w1:p2
+answering agy folder-trust dialog (throwaway store)
+
+=== ADVERSARIAL: real agy mid-turn
+--- rendered pane (mid-turn)
+se" --model gemini-3.8-flash-low --effort low --dangerously-skip-permissions
+agent@v2202609421980523939:/tmp/fm-lab.plcvNX/wt$ HOME=/tmp/fm-lab.plcvNX/agyhome agy --prompt-interactive "Add 12345 an
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account>
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.plcvNX/wt
+  ▄▀▀      ▀▀▄
+⣯  Generating...
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+esc to cancel                                                                                     Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"unknown"}
+--- fm_backend_agent_state: unreadable
+--- fm_backend_herdr_composer_state: unknown
+
+=== settled idle REAL agy worker
+--- rendered pane (settled idle)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.plcvNX/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                   Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: empty
+
+=== ADVERSARIAL: a half-typed draft in the real agy composer must still refuse (fixed code)
+--- rendered pane (draft typed)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.plcvNX/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> half-typed draft
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                  Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: unknown
+fm-control.sh agyx exit (HEAD, draft in composer) -> rc=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.plcvNX/home
+error: task agyx's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'exit'
+agent state after refused exit: alive
+--- rendered pane (draft cleared)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.plcvNX/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                   Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: empty
+
+=== BASELINE (base commit 9601909): fm-control exit against the idle real agy worker
+fm-control.sh agyx exit (BASE) -> rc=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.plcvNX/home
+error: task agyx's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'exit'
+agent state after base exit attempt: alive
+
+=== FIXED (HEAD): fm-control exit against the idle real agy worker
+fm-control.sh agyx exit (HEAD) -> rc=0
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.plcvNX/home
+stopped agyx harness=agy backend=herdr endpoint=fm-lab-agyexit-1160436-28767:w1:p2 worktree=/tmp/fm-lab.plcvNX/wt
+--- rendered pane (after exit)
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.plcvNX/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Resume with -c (or command below):
+agy --conversation=<redacted>
+agent@v2202609421980523939:/tmp/fm-lab.plcvNX/wt$
+--- herdr agent get: {"agent":null,"agent_status":null}
+--- fm_backend_agent_state: dead
+--- fm_backend_herdr_composer_state: unknown
+--- pane foreground processes: ["bash"]
+worktree preserved: yes
+endpoint preserved: yes
+
+=== idempotence: second exit
+rc=0
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.plcvNX/home
+already-stopped agyx harness=agy backend=herdr endpoint=fm-lab-agyexit-1160436-28767:w1:p2 worktree=/tmp/fm-lab.plcvNX/wt
+
+=== RESULT draft_rc=1 base_rc=1 head_rc=0
+
+=== teardown
+lab session fm-lab-agyexit-1160436-28767 torn down, default-session tripwire intact

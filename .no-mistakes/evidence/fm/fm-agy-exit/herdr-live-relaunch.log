@@ -1,0 +1,129 @@
+
+=== provision lab session fm-lab-agyexit-1167772-30093
+/tmp/fm-lab.wlQspe/home
+
+=== launch REAL agy 1.2.16 in lab pane fm-lab-agyexit-1167772-30093:w1:p2
+answering agy folder-trust dialog (throwaway store)
+
+=== settled idle REAL agy worker
+--- rendered pane (settled idle)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.wlQspe/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                   Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: empty
+
+=== ADVERSARIAL: a half-typed draft in the real agy composer must still refuse (fixed code)
+--- rendered pane (draft typed)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.wlQspe/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> half-typed draft
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                  Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: unknown
+fm-control.sh agyx exit (HEAD, draft in composer) -> rc=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.wlQspe/home
+error: task agyx's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'exit'
+agent state after refused exit: alive
+--- rendered pane (draft cleared)
+d 67890. Reply with exactly the sum and nothing else" --model gemini-3.8-flash-low --effort low --dangerously-skip-permi
+ssions
+      ▄▀▀▄        Antigravity CLI 1.2.16
+     ▀▀▀▀▀▀       <redacted-account> (Google AI Pro)
+    ▀▀▀▀▀▀▀▀      Gemini 3.8 Flash (Low)
+   ▄▀▀    ▀▀▄     /tmp/fm-lab.wlQspe/wt
+  ▄▀▀      ▀▀▄
+────────────────────────────────────────────────────────────
+> Add 12345 and 67890. Reply with exactly the sum and nothing else
+  80235
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                   Gemini 3.8 Flash · low
+--- herdr agent get: {"agent":"agy","agent_status":"idle"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: empty
+
+=== BASELINE (base commit 9601909): fm-control exit against the idle real agy worker
+fm-control.sh agyx exit (BASE) -> rc=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.wlQspe/home
+error: task agyx's composer state is 'unknown', not proven empty; refusing to type the /quit exit command because it could concatenate onto existing text. Clear the composer, then retry 'exit'
+agent state after base exit attempt: alive
+
+=== FIXED (HEAD): fm-control relaunch --harness claude against the idle real agy worker
+fm-control.sh agyx relaunch --harness claude (HEAD) -> rc=0
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.wlQspe/home
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.wlQspe/home
+warning: /tmp/fm-lab.wlQspe/home/data/agyx/launch-brief.md records no ship branch; defaulting to legacy branch fm/agyx
+warning: /tmp/fm-lab.wlQspe/home/data/agyx/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+relaunched agyx harness=claude from=agy model=default effort=default backend=herdr endpoint=fm-lab-agyexit-1167772-30093:w1:p2 worktree=/tmp/fm-lab.wlQspe/wt
+--- rendered pane (after relaunch)
+agent@v2202609421980523939:/tmp/fm-lab.wlQspe/wt$ export FM_TASK_ID=agyx
+agent@v2202609421980523939:/tmp/fm-lab.wlQspe/wt$ . '/tmp/fm-agyx+6bacd2884a64d7a2237e8e1c0d4b66b6434e3b43cf98bb06a66987
+86faef4497/launch.s1791096269.1172568.3545.sh'
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  WARNING: Claude Code running in Bypass Permissions mode
+  In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous
+  commands.
+  This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be
+  restored if damaged.
+  By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.
+  https://code.claude.com/docs/en/security
+  ❯ No, exit
+    Yes, I accept
+  Enter to confirm · Esc to cancel
+--- herdr agent get: {"agent":"claude","agent_status":"blocked"}
+--- fm_backend_agent_state: alive
+--- fm_backend_herdr_composer_state: pending
+--- meta after relaunch
+window=fm-lab-agyexit-1167772-30093:w1:p2
+harness=claude
+model=default
+effort=default
+--- pane foreground processes: ["claude"]
+cleanup exit of the replacement -> rc=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.wlQspe/home
+error: task agyx's composer visibly holds pending text; refusing to type the /exit exit command because it would concatenate onto that text. Clear or submit the pending text, then retry 'exit'
+
+=== RESULT draft_rc=1 base_rc=1 head_rc=0
+
+=== teardown
+lab session fm-lab-agyexit-1167772-30093 torn down, default-session tripwire intact
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-commit': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/prepare-commit-msg': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/commit-msg': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/post-checkout': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/post-rewrite': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-auto-gc': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-push': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/post-merge': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-merge-commit': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/post-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/post-commit': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/sendemail-validate': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/applypatch-msg': Permission denied
+rm: cannot remove '/tmp/fm-lab.wlQspe/home/state/agyx.git-hooks/pre-rebase': Permission denied
