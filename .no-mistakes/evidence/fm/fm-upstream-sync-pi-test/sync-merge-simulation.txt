@@ -1,0 +1,22 @@
+upstream main (ls-remote kunchenguid/firstmate): 9ea0c41a480cf965b80bba60a80701639f70f723	refs/heads/main
+
+## BEFORE: fork main 42b8e1a + upstream 9ea0c41
+6a18bba993bb72edd015497f90b5c69d6152bcfd
+tests/fm-calm-pi-extension.test.sh
+
+Auto-merging bin/fm-teardown.sh
+Auto-merging bin/fm-watch.sh
+Auto-merging docs/architecture.md
+Auto-merging docs/configuration.md
+Auto-merging tests/fm-calm-pi-extension.test.sh
+CONFLICT (content): Merge conflict in tests/fm-calm-pi-extension.test.sh
+Auto-merging tests/fm-pi-branch-extension.test.sh
+exit=1
+
+## AFTER: resolved dd3a718 + upstream 9ea0c41
+d9cf5784dbbddf34ad772a945aa408db9a787b41
+exit=0
+tree of HEAD: d9cf5784dbbddf34ad772a945aa408db9a787b41
+upstream tip is an ancestor of HEAD (sync merge = already up to date)
+conflict markers in tree: 0
+resolved file vs upstream: identical
