@@ -699,6 +699,8 @@ bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh
 bin/fm-test-run.sh tests/fm-peek-remote.test.sh
 bin/fm-test-run.sh tests/fm-crew-state.test.sh
 bin/fm-test-run.sh tests/fm-remote-job.test.sh
+bin/fm-test-run.sh tests/fm-remote-job-claim-reap.test.sh
+bin/fm-test-run.sh tests/fm-remote-job-claim-retention.test.sh
 bin/fm-test-run.sh tests/fm-remote-job-launchagent.test.sh
 bin/fm-test-run.sh tests/fm-remote-transport-lanes.test.sh
 bin/fm-test-run.sh tests/fm-remote-doctor.test.sh
