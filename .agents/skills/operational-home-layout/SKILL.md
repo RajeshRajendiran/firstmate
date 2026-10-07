@@ -91,6 +91,7 @@ state/               runtime records and signals; gitignored
   tool-updates.check.sh  generated watched-tool update poll shim and its .check-trust binding; present only after bin/fm-tool-update-check.sh arm; its report record .tool-updates is what keeps one pending update from being reported on every poll
   mail.check.sh      generated received-mail poll shim and its .check-trust binding; present only after bin/fm-mail-check.sh arm; report record .mail-check (mail schema: docs/configuration.md "Mail plane")
   .mail-seen .mail-woken .mail-retry .mail-retry-pos .mail-turn .mail-seen.lock  mail-plane poll cursor, emission journal, transient-fetch retry set, retry-scan position, contended-slot turn flag, and overlapping-poll lock; written only by bin/fm-mail.sh (mail schema: docs/configuration.md "Mail plane")
+  startup-growth.check.sh  generated daily startup-growth poll shim and its .check-trust binding; present only after bin/fm-startup-growth-check.sh arm; its record .startup-growth-check holds the daily gate, the per-file growth baselines, and the last reported finding set, so removing it re-baselines growth silently and repeats a standing finding such as a budget overrun once (docs/configuration.md "Daily startup growth check")
   telegram/            accepted-message records keyed by update_id; written only by bin/fm-telegram.sh
   telegram/handled/    acknowledged message records moved here by the Telegram plane or telegram-captain-channel skill
   telegram/responses/  private response-attempt records written by the Telegram background responder
