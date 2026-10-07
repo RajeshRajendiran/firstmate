@@ -1,0 +1,39 @@
+$ FM_HOME=$LAB bin/fm-startup-growth-check.sh arm
+armed: state/startup-growth.check.sh
+[exit=0]
+-rwx------ 1 agent agent  171 Oct  6 22:07 startup-growth.check.sh
+-rw------- 1 agent agent   84 Oct  6 22:07 startup-growth.check-trust
+--- first check (baseline, expect silent)
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791342440 bin/fm-startup-growth-check.sh check
+startup-growth: startup memory budget unavailable owner=bin/fm-startup-memory-budget.sh reason=invalid config/startup-memory-budget - file is absent
+[exit=0]
+--- record:
+schema	fm-startup-growth-check-v1
+last_eval	1791342440
+AGENTS.md	tracked	present	48575	48575
+CLAUDE.md	tracked	present	90	90
+bin/fm-session-start.sh	tracked	present	55508	55508
+bin/fm-bootstrap.sh	tracked	present	77824	77824
+bin/fm-supervision-instructions.sh	tracked	present	10437	10437
+data/projects.md	printed-memory	absent	0	-
+data/secondmates.md	printed-memory	absent	0	-
+data/captain.md	memory	absent	0	-
+data/captain-shared.md	memory	absent	0	-
+data/learnings.md	memory	absent	0	-
+reported	startup memory budget unavailable owner=bin/fm-startup-memory-budget.sh reason=invalid config/startup-memory-budget - file is absent
+--- grow data/projects.md by 3000 bytes, poll within the same day (expect silent daily gate)
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791342500 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- next day poll (expect a finding)
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791428841 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- following day, no further growth (expect silent; baseline rebased)
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791515242 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- run the generated shim itself the way the watcher would
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791601643 bash /tmp/fm-lab.4pWYLX/state/startup-growth.check.sh
+[exit=0]
+$ FM_HOME=$LAB bin/fm-startup-growth-check.sh disarm
+disarmed: state/startup-growth.check.sh
+[exit=0]
+(no startup-growth files after disarm)

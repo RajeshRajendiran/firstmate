@@ -1,0 +1,31 @@
+$ FM_HOME=$LAB bin/fm-startup-growth-check.sh arm
+armed: state/startup-growth.check.sh
+[exit=0]
+--- day 0: first evaluation baselines silently
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791342452 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- grow data/projects.md by 3000 bytes (~1000 tokens) and poll again inside the same day: daily gate, expect silent
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791342512 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- day 1: expect a projects.md growth finding
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791428853 bin/fm-startup-growth-check.sh check
+startup-growth: printed-memory growth data/projects.md +1000 estimated_tokens (+3000 bytes, total 3011 bytes)
+[exit=0]
+--- day 2: no further growth, expect silent (baseline rebased)
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791515254 bin/fm-startup-growth-check.sh check
+[exit=0]
+--- day 3: push learnings.md past the 7500-token budget (30000 bytes); expect budget overrun finding
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791601655 bash /tmp/fm-lab.XqLahS/state/startup-growth.check.sh
+startup-growth: memory growth data/learnings.md +10000 estimated_tokens (+30000 bytes, total 30012 bytes); startup memory budget overrun total_estimated_tokens=10004 budget=7500 owner=bin/fm-startup-memory-budget.sh
+[exit=0]
+--- day 4: standing overrun is not re-reported, expect silent
+$ FM_HOME=$LAB env FM_STARTUP_GROWTH_NOW=1791688056 bash /tmp/fm-lab.XqLahS/state/startup-growth.check.sh
+startup-growth: startup memory budget overrun total_estimated_tokens=10004 budget=7500 owner=bin/fm-startup-memory-budget.sh
+[exit=0]
+--- adversarial: tampered shim is refused by the trust binding
+$ FM_HOME=$LAB bash bin/fm-check-register.sh verify startup-growth
+error: invalid custom check registration
+[exit=2]
+$ FM_HOME=$LAB bin/fm-startup-growth-check.sh disarm
+disarmed: state/startup-growth.check.sh
+[exit=0]

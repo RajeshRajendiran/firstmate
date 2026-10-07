@@ -1,0 +1,190 @@
+FM_TEST_BEGIN 2026-10-07T03:07:10Z tests/fm-calm-pi-extension.test.sh family=pure-contract-unit expected_gate_skip=none
+skip: installed @earendil-works/pi-coding-agent package not found
+ok - Pi calm compatibility evidence never rejects a Pi version for being newer than 0.82.0, and still fails closed on a missing or malformed version
+skip: installed @earendil-works/pi-coding-agent package not found
+ok - missing Pi presentation class exports reach the independent adapter degradation path
+skip: installed @earendil-works/pi-coding-agent package not found
+skip: installed @earendil-works/pi-coding-agent package not found
+skip: installed @earendil-works/pi-coding-agent package not found
+skip: installed @earendil-works/pi-coding-agent package not found
+skip: installed @earendil-works/pi-coding-agent package not found
+ok - Pi operational follow-up E2E processes exact user-role notifications once while Calm hides current and adjacent rows, Calm off and absent render them, and restart preserves semantics
+ok - Pi 1.0.4 with Calm on hides and retains queued Firstmate input through Escape, delivers it once, and leaves Calm off stock
+ok - Pi Calm native /skill:ahoy geometry keeps every collapsed thinking and tool block at zero height while preserving expansion, history, restart, and Calm-off rendering
+skip: installed @earendil-works/pi-coding-agent package not found
+ok - the rendered-export-DOM guard renders in one pass, retries a bounded number of Chrome start-up failures, and reports the Chrome binary, Chrome version, Pi version, exit status, and Chrome diagnostic when every attempt fails
+not ok - Chrome or Chromium is required for rendered export DOM assertions; set FM_CHROME_BIN to one
+FM_TEST_END 2026-10-07T03:07:34Z tests/fm-calm-pi-extension.test.sh exit=1 duration_ms=24202 gate_skip=false
+FM_TEST_BEGIN 2026-10-07T03:07:34Z tests/fm-remote-reply.test.sh family=secondmate expected_gate_skip=none
+ok - default delta reader waits 0.5 seconds then delivers a non-destructive complete-line delta
+ok - override delta reader waits 0.07 seconds then delivers a non-destructive complete-line delta
+ok - a blocking non-destructive remote delta reaches durable process-event capture
+ok - a captured delta is applied, acknowledged, and re-armed without a handler
+ok - ingest appends one validated line, fetches its document, and advances the cursor
+ok - replayed capture has one deduplicated append and one durable handling identity
+ok - later generations cannot invalidate an unacknowledged ingested result
+ok - the remote status and decision model mirrors and the cursor advances
+ok - a remote mate's new decision folds open exactly as a local mate's does
+ok - a replayed mirrored delta is idempotent in both the stream and the cursor
+ok - transported control bytes are normalized in place and never stop the stream
+ok - payload protocol-field names cannot collide with transport metadata
+ok - NUL bytes are normalized in place before shell line processing
+ok - local document storage failures remain retryable until delivery succeeds
+ok - a structured pointer must end at its token boundary
+ok - adjacent pointers are fetched while malformed tokens remain unchanged
+ok - a rejected candidate never gives the following text a false leading boundary
+ok - nested remote reports relay while an undeliverable foreign pointer fails open
+ok - the reported incident raises no standing decision and still delivers the report
+ok - an undeliverable structured offer fails open with one note and never a decision
+ok - a remote refusal surfaces its own reason without opening a decision
+ok - a failed pointer extraction never commits a partial delta
+ok - a failed mirror write never drops status content or advances the cursor
+ok - source-line identity survives commit failure and cursor-loss recapture
+ok - a mirrored reserved-key line cannot squat or clear the parent's own decision
+ok - a reply that arrives after escalation resolves it and clears the open decision
+ok - a remote reply listener stays owned across empty waits and a delta
+ok - a failed remote read exits instead of relistening
+ok - persistent ingestion failure leaves exactly one durable capture
+ok - a preempted reply poll reports a closed window without publishing channel freshness
+ok - a preempted reply poll keeps its listener and reconcile launches nothing
+ok - a quiet reply window publishes the caught-up watermark the reply guard reads
+ok - a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake
+ok - truncation is detected, escalated once, and not silently rebased
+ok - a repeated continuity break after an operator resolve appends nothing
+ok - remote reply retirement quiesces and refuses unhandled captured results
+ok - a later continuity break after repair and re-advance opens the decision again
+ok - an old-format continuity line does not swallow the next break
+ok - a later continuity break after the cursor moves without retirement opens the decision again
+ok - a continuity break after retirement and an identical restore opens the decision once
+ok - a failed cursor removal does not increase the retirement count
+ok - a retirement that stops after removing the cursor leaves the old count
+ALL TESTS PASSED
+FM_TEST_END 2026-10-07T03:12:17Z tests/fm-remote-reply.test.sh exit=0 duration_ms=282835 gate_skip=false
+FM_TEST_BEGIN 2026-10-07T03:12:17Z tests/fm-startup-growth-check.test.sh family=unclassified expected_gate_skip=none
+ok - fm-startup-growth-check
+FM_TEST_END 2026-10-07T03:12:26Z tests/fm-startup-growth-check.test.sh exit=0 duration_ms=8750 gate_skip=false
+FM_TEST_BEGIN 2026-10-07T03:12:26Z tests/fm-control.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-control exit: every verified harness gets its own verified exit command
+ok - fm-control interrupt: every verified harness gets its own verified key and repeat count
+ok - fm-control Devin interrupt: second press only after the armed hint, then busy invalidated without fabricating idle
+ok - fm-control Devin interrupt: an idle agent gets one Escape and reports not-running
+ok - fm-control Devin exit: a busy record whose turn already ended never opens the revert picker
+ok - fm-control Devin interrupt: a revert picker a press opened is closed with Escape, never Enter
+ok - fm-control Devin: an open revert picker refuses every typed command
+ok - fm-control interrupt: opencode needs a double Escape, claude a single one
+ok - fm-control: a harness with no verified control mechanics is refused, not guessed at
+ok - fm-control-lib: a recorded harness resolves to its verified adapter without guessing
+ok - fm-control-lib: only a runtime's own recorded session has a relaunch resume form
+ok - fm-control: prefixed recorded harnesses reach interrupt and exit mechanics
+ok - fm-control-lib: the backend key matrix matches each adapter's real send-key surface
+ok - fm-control-lib: adapter capability is per task kind, not per adapter alone
+ok - fm-control interrupt: a backend that cannot deliver the harness's key refuses instead of sending another
+ok - fm-control: a backend that cannot prove an agent stopped refuses exit and relaunch
+ok - fm-control-lib: stop-proving verbs are gated on the backends that really classify agent state
+ok - fm-control: a legacy window label is refused and the exact task id is named
+ok - fm-control: an explicit backend endpoint is never a control target
+ok - fm-control: an unrecorded task id is refused
+ok - fm-control: a record whose endpoint identity names another task is refused
+ok - fm-control: a remotely placed secondmate is refused by placement, not by a metadata complaint
+ok - fm-control: interrupt and exit lock before task-state resolution
+ok - fm-control: the verb list is closed - no raw keys, arbitrary text, or clear verb
+ok - fm-control: resume is refused with the determinism reason and the alternative
+ok - fm-control: profile and note flags belong to relaunch only
+ok - fm-control exit: an already-stopped agent is idempotent success with no bytes sent
+ok - fm-control exit: an unprovable tmux endpoint refuses instead of claiming the agent stopped
+ok - fm-control interrupt: refuses when no agent is running rather than keying a shell
+ok - fm-control exit: an endpoint whose process cannot be attributed refuses
+ok - fm-control exit: a busy agent receives interrupt delivery before the exit command
+ok - fm-control exit: an idle agent goes straight to its exit command
+ok - fm-control exit: retiring a codex incarnation drops busy_gen with the sidecar
+ok - fm-control exit: an already-open background-task picker is not typed into
+ok - fm-control exit: the Enter that opens the background-task picker is not followed by a confirming Enter
+ok - fm-control exit: a picker that renders after the submit returned is named when the stop wait times out
+ok - fm-control interrupt: unconfirmed delivery preserves observed busy state
+ok - fm-control interrupt: muse confirms cancellation from its session log
+ok - fm-control interrupt: postconditions are revalidated after acknowledgement polling
+ok - fm-control exit: an interrupt-stopped agent satisfies the gone-state postcondition
+ok - fm-control exit: a stubborn agent reports delivered input and an unconfirmed exit
+ok - fm-control interrupt: grok reports delivery without claiming cancellation
+ok - fm-control interrupt: grok's idle footer does not confirm cancellation
+ok - fm-control: a lifecycle command to a secondmate is unmarked and opens no reply expectation
+ok - fm-control's arrival leaves fm-send's from-firstmate marking untouched
+FM_TEST_END 2026-10-07T03:13:59Z tests/fm-control.test.sh exit=0 duration_ms=92719 gate_skip=false
+FM_TEST_BEGIN 2026-10-07T03:13:59Z tests/fm-contributions.test.sh family=snapshot-bearings expected_gate_skip=optional-binary
+ok - only required-captain contributions are rows; other actors are counted
+ok - replaced-head verdict is stale and cannot create a captain requirement
+ok - unchecked ownership is disclosed and cannot prove silence
+ok - newest check with no verdict is distinct from passing and pending
+ok - new maintainer comment wakes once and stays pending until acknowledged
+ok - new maintainer review wakes once and stays pending until acknowledged
+ok - new maintainer inline wakes once and stays pending until acknowledged
+ok - ready-for-pr on a filed issue becomes a planning wake
+ok - a fresh open issue remains measured maintainer triage
+ok - an absent check lane remains missing across repeated observations
+ok - mixed freshness retains measured captain work and discloses the gap
+ok - malformed durable evidence cannot prove silence
+ok - a transient ready-for-pr label wakes and its exact acknowledgement survives replay
+ok - recorded judgment keeps its exact head and is stale immediately on a published replacement
+ok - verdict help and refusal name exactly the actors the command accepts
+ok - a current forge observation refreshes a verdict after a replacement
+ok - an unavailable current head leaves verdict freshness unknown
+ok - away yolo delivery is fleet work without granting merge authority
+actionable: PR https://github.com/o/r/pull/8 is registered but its ready line did not reach the parent channel (rc=3)
+ok - cross-home away yolo delivery is fleet work
+ok - retired ownership persists and unsupported forge remains visibly unmeasured
+ok - unsupported forge coverage is disclosed without inventing fleet work
+ok - held unsupported forge coverage remains unmeasured
+ok - shared contribution signal wakes once while retaining both acknowledgements
+ok - watcher keeps observer diagnostics separate from contribution wakes
+ok - expired child unsupported-forge coverage remains unmeasured
+ok - watcher surfaces one newly durable contribution signal without re-ringing it
+ok - parent consumes measured child coverage and refuses expired child silence
+ok - unreadable pending signals refuse an empty-inbox claim
+ok - record task identity is the directory dirname/basename named
+ok - snapshot and pending create nothing in a home without state
+ok - budget exhausted mid-observation (exhaust) keeps the prior record and stays silent
+ok - budget exhausted mid-observation (hang) keeps the prior record and stays silent
+ok - a genuine forge failure inside the budget still records the error and wakes
+ok - a URL owned by two tasks is observed once and every owner receives the result
+ok - a merged or closed contribution settles once, is not re-read, and never wakes again
+ok - a late owner inherits a terminal observation without a forge read or wake
+ok - a retry converges every owner whose saved row is not terminal, keeping its own acknowledgement state
+ok - an open PR linked from a done task keeps being observed
+ok - a later URL waits when fewer than fifteen seconds remain for its observation
+ok - eight 3-second PR reads complete fresh within one 20-second poll cycle
+ok - a read killed at the five-second bound is budget refusal and stays silent
+ok - rotation preserves timed-out records and refreshes every slow PR on successive cycles
+ok - the effective budget is cut down to the watcher per-check bound with margin
+ok - generated checks enforce configured and inherited budgets at runtime
+ok - a genuinely unavailable forge records an error and wakes once per failure episode
+ok - a late owner does not restart a shared forge failure episode
+ok - retire stops the unavailable check, leaves rotation and restores complete coverage
+ok - a late owner settled beside a retired final record stays unretired and known
+ok - retire is idempotent and refuses non-captain, unknown, malformed and signal-bearing pairs
+FM_TEST_END 2026-10-07T03:16:40Z tests/fm-contributions.test.sh exit=0 duration_ms=160705 gate_skip=false
+FM_TEST_BEGIN 2026-10-07T03:16:40Z tests/fm-telegram-check.test.sh family=unclassified expected_gate_skip=none
+ok - fm-telegram-check: help and usage plumbing
+ok - fm-telegram-check: arm writes and binds, re-arm is idempotent, disarm removes
+ok - fm-telegram-check: arm and listen are mutually exclusive
+ok - fm-telegram-check: listen-arm and standing check are mutually exclusive
+ok - fm-telegram-check: a successful poll that surfaces a message emits one wake line
+ok - fm-telegram-check: polling invokes the acknowledgement-only background responder
+ok - fm-telegram-check: a poll failure is reported once and re-reported after recovery
+ok - fm-telegram-check: an unconfigured home is reported once, not every poll
+ok - fm-telegram-check: a slow poll times out into a one-line report
+ok - fm-telegram-check: standing check stays silent while listen source is active
+ok - fm-telegram-check: a missing Telegram plane is reported, not assumed
+ok - fm-telegram-check: listen-arm resolves a relative FM_HOME
+FM_TEST_END 2026-10-07T03:16:49Z tests/fm-telegram-check.test.sh exit=0 duration_ms=8928 gate_skip=false
+FM_TEST_SUMMARY total=6 failed=1 skipped_gate=0 duration_ms=578591
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=92719 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=24202 failed=1
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=282835 failed=0
+FM_TEST_SUMMARY_FAMILY family=snapshot-bearings count=1 duration_ms=160705 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=17678 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-remote-reply.test.sh duration_ms=282835
+FM_TEST_SLOWEST rank=2 script=tests/fm-contributions.test.sh duration_ms=160705
+FM_TEST_SLOWEST rank=3 script=tests/fm-control.test.sh duration_ms=92719
+FM_TEST_SLOWEST rank=4 script=tests/fm-calm-pi-extension.test.sh duration_ms=24202
+FM_TEST_SLOWEST rank=5 script=tests/fm-telegram-check.test.sh duration_ms=8928
+FM_TEST_SLOWEST rank=6 script=tests/fm-startup-growth-check.test.sh duration_ms=8750
