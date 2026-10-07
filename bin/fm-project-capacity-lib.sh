@@ -67,9 +67,9 @@
 # place needs no lock, because removing a record or adding pr= only ever lowers
 # the count.
 #
-# Requires bin/fm-wake-lib.sh (root home, local homes, project lock path),
-# bin/fm-secondmate-registry-lib.sh (which the local-homes walk reads), and
-# bin/fm-backend.sh (fm_meta_get) to be sourced first. No side effects on source.
+# Requires bin/fm-wake-lib.sh (root home, local homes, project lock path) and
+# bin/fm-secondmate-registry-lib.sh (which the local-homes walk reads) to be
+# sourced first. No side effects on source.
 
 # Exit status of a spawn deferred because the project is at capacity: the
 # sysexits "temporary failure" code, so a caller can tell a deferral that leaves
@@ -97,7 +97,8 @@ fm_project_capacity_config_dir() {  # <spawning-home> <spawning-config-dir>
 # FM_PROJECT_CAPACITY_ANY to 1 when the declaration caps any project at all.
 # Returns 1 with FM_PROJECT_CAPACITY_ERROR when the declaration is unreadable.
 fm_project_capacity_lookup() {  # <config-dir> <project-name>
-  local name=$2 line lineno=0 pname pcap seen='|'
+  local name=$2 line lineno=0 pname pcap contents previous duplicate
+  local -a seen_names=()
   FM_PROJECT_CAPACITY_FILE="$1/project-capacity"
   FM_PROJECT_CAPACITY=
   FM_PROJECT_CAPACITY_ANY=
@@ -107,6 +108,10 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
   fi
   if [ ! -f "$FM_PROJECT_CAPACITY_FILE" ] || [ ! -r "$FM_PROJECT_CAPACITY_FILE" ]; then
     FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE is not a readable regular file"
+    return 1
+  fi
+  if ! contents=$(cat "$FM_PROJECT_CAPACITY_FILE"); then
+    FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE could not be read"
     return 1
   fi
   while IFS= read -r line || [ -n "$line" ]; do
@@ -147,17 +152,19 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
       FM_PROJECT_CAPACITY=
       return 1
     fi
-    case "$seen" in
-      *"|$pname|"*)
-        FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE line $lineno names $pname a second time"
-        FM_PROJECT_CAPACITY=
-        return 1
-        ;;
-    esac
-    seen="$seen$pname|"
+    duplicate=0
+    for previous in "${seen_names[@]}"; do
+      [ "$previous" != "$pname" ] || duplicate=1
+    done
+    if [ "$duplicate" -eq 1 ]; then
+      FM_PROJECT_CAPACITY_ERROR="$FM_PROJECT_CAPACITY_FILE line $lineno names $pname a second time"
+      FM_PROJECT_CAPACITY=
+      return 1
+    fi
+    seen_names+=("$pname")
     [ "$pname" != "$name" ] || FM_PROJECT_CAPACITY=$pcap
-  done < "$FM_PROJECT_CAPACITY_FILE"
-  [ "$seen" = '|' ] || FM_PROJECT_CAPACITY_ANY=1
+  done <<< "$contents"
+  [ "${#seen_names[@]}" -eq 0 ] || FM_PROJECT_CAPACITY_ANY=1
   return 0
 }
 
@@ -175,7 +182,7 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
 # a state directory or task record in them cannot be read, since skipping it
 # could undercount the holders.
 fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> <own-id>
-  local want=$1 own=$2 first=$3 self=$4 state meta kind project lock id label i
+  local want=$1 own=$2 first=$3 self=$4 state meta kind pr project lock id label i line contents
   local -a cache_dirs cache_locks
   FM_PROJECT_CAPACITY_OCCUPANTS=0
   FM_PROJECT_CAPACITY_OCCUPANT_IDS=
@@ -198,10 +205,22 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
         FM_PROJECT_CAPACITY_ERROR="task record $meta cannot be read"
         return 1
       }
-      kind=$(fm_meta_get "$meta" kind)
+      if ! contents=$(cat "$meta"); then
+        FM_PROJECT_CAPACITY_ERROR="task record $meta cannot be read"
+        return 1
+      fi
+      kind=
+      pr=
+      project=
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          kind=*) kind=${line#*=} ;;
+          pr=*) pr=${line#*=} ;;
+          project=*) project=${line#*=} ;;
+        esac
+      done <<< "$contents"
       [ "$kind" != secondmate ] || continue
-      [ -z "$(fm_meta_get "$meta" pr)" ] || continue
-      project=$(fm_meta_get "$meta" project)
+      [ -z "$pr" ] || continue
       [ -n "$project" ] || continue
       lock=
       i=0

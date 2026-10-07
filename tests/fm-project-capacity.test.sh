@@ -23,6 +23,8 @@ TMP_ROOT=$(fm_test_tmproot fm-project-capacity)
 DEFER_EXIT=75
 HAVE_TASKS_AXI=0
 command -v tasks-axi >/dev/null 2>&1 && HAVE_TASKS_AXI=1
+export FM_REAL_CAT
+FM_REAL_CAT=$(command -v cat)
 
 # --- fixture ----------------------------------------------------------------
 
@@ -102,7 +104,14 @@ SH
 printf 'treehouse %s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 exit 0
 SH
-  chmod +x "$fakebin/tmux" "$fakebin/treehouse"
+  cat > "$fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  [ -z "${FM_FAIL_READ_PATH:-}" ] || [ "$arg" != "$FM_FAIL_READ_PATH" ] || exit 1
+done
+exec "$FM_REAL_CAT" "$@"
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/treehouse" "$fakebin/cat"
   fm_fake_exit0 "$fakebin" gh gh-axi no-mistakes
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -163,7 +172,7 @@ run_spawn() {  # <case-dir> <home> <pane-path> <args...>
     FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
-    PATH="$case_dir/fakebin:$PATH" \
+    FM_FAIL_READ_PATH="${FM_FAIL_READ_PATH:-}" PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -261,6 +270,21 @@ test_spaced_project_name_is_declared() {
     "the deferral did not use the spaced project's declared capacity"
   assert_absent "$home/state/task-c.meta" "the deferred spaced-name spawn published a record"
   pass "a project name with spaces is declared by taking the capacity from the last field"
+}
+
+test_literal_project_names_do_not_collide() {
+  local case_dir home named wt out rc=0
+  case_dir=$(make_case literal-name task-c)
+  home="$case_dir/home"
+  named="$case_dir/b"
+  git clone -q "$(git -C "$case_dir/project" remote get-url origin)" "$named"
+  git -C "$named" worktree add --quiet -b wt-literal "$case_dir/wt-literal"
+  wt="$case_dir/wt-literal"
+  declare_capacity "$home" "a|b 1" "b 1"
+  out=$(run_spawn "$case_dir" "$home" "$wt" task-c "$named" --mode no-mistakes --yolo off) || rc=$?
+  expect_code 0 "$rc" "literal project names were treated as duplicate patterns: $out"
+  assert_contains "$out" "spawned task-c" "the literally named project did not launch"
+  pass "project declaration names are compared literally"
 }
 
 # A clone directory may be named with a leading '#'. That name is declared when
@@ -513,6 +537,32 @@ test_failed_spawn_after_admission_holds_no_place() {
   pass "a spawn that fails after admission leaves no record and holds no place"
 }
 
+test_read_failures_refuse_admission() {
+  local case_dir root mate out rc=0 path expected
+  case_dir=$(make_case read-failures task-c)
+  root="$case_dir/home"
+  mate="$case_dir/mate"
+  make_home "$mate"
+  printf '%s\n' schema=fm-secondmate-parent.v1 route=local "parent_home=$root" > "$mate/.fm-secondmate-parent"
+  printf -- '- mate - a local mate (home: %s; scope: project work; projects: project; added 2026-09-01)\n' "$mate" \
+    > "$root/data/secondmates.md"
+  declare_capacity "$root" "project 2"
+  write_live "$root" live-a "$case_dir/project"
+
+  while IFS='|' read -r path expected; do
+    rc=0
+    out=$(FM_FAIL_READ_PATH="$path" spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+    expect_code 1 "$rc" "a failed read admitted a worker: $out"
+    assert_contains "$out" "$expected" "the refusal did not identify the failed read"
+    assert_absent "$root/state/task-c.meta" "a failed read still published a task record"
+  done <<ROWS
+$root/config/project-capacity|project capacity declaration is unreadable
+$root/state/live-a.meta|task record $root/state/live-a.meta cannot be read
+$root/data/secondmates.md|local Firstmate registry cannot be read at $root/data/secondmates.md
+ROWS
+  pass "capacity, task record, and registry read failures refuse admission"
+}
+
 test_unreadable_declaration_refuses_every_spawn() {
   local case_dir home out rc label body before worktrees
   case_dir=$(make_case unreadable task-c)
@@ -628,6 +678,7 @@ test_undeclared_capacity_keeps_dispatch_uncapped
 test_available_capacity_admits_the_worker
 test_exhausted_capacity_defers_without_leaving_anything_behind
 test_spaced_project_name_is_declared
+test_literal_project_names_do_not_collide
 test_hash_prefixed_project_name_is_declared
 test_symlinked_home_counts_each_worker_once
 test_release_frees_a_place
@@ -637,6 +688,7 @@ test_capacity_is_shared_by_every_local_home
 test_unreadable_holders_refuse_admission
 test_concurrent_spawns_cannot_both_take_the_last_place
 test_failed_spawn_after_admission_holds_no_place
+test_read_failures_refuse_admission
 test_unreadable_declaration_refuses_every_spawn
 test_batch_reports_a_deferred_pair
 test_orca_spawn_is_admitted_under_the_shared_project_lock
