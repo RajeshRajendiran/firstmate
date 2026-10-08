@@ -53,9 +53,9 @@ EOF
 
 spawn_worktree_has_origin_config() { # <worktree>
   # Resolved remote.origin.* variables cover Git's effective include/includeIf chain; raw headers are also detected in the worktree config and any included file Git names through another variable. Git cannot enumerate a variable-less included file, so an empty origin section that is its only content remains indistinguishable from absence and intentionally proceeds rather than reimplementing Git's config parser.
-  local worktree=$1 config origin key seen=$'\n'
+  local worktree=$1 config origin seen=$'\n'
   git -C "$worktree" config --get-regexp '^remote\.origin\.' >/dev/null 2>&1 && return 0
-  while IFS=$'\t' read -r origin key; do
+  while IFS=$'\t' read -r origin _; do
     case $origin in file:*) config=${origin#file:} ;; *) continue ;; esac
     [ -f "$config" ] || continue
     case $seen in *$'\n'"$config"$'\n'*) continue ;; esac
