@@ -1,0 +1,18 @@
+ok - a project with no declared capacity keeps today's uncapped dispatch
+ok - a spawn is admitted while its project still has a free place
+ok - a spawn beyond capacity is deferred before any record, brief, endpoint, worktree, or backlog move exists
+ok - a project name with spaces is declared by taking the capacity from the last field
+ok - project declaration names are compared literally
+ok - a project name beginning with # is declared, and a # comment stays a comment
+ok - a home reached through a symlink counts each of its workers once
+ok - a recorded PR handoff or a cleanup each frees exactly one place
+ok - a restart of a task id does not count that task's own record
+ok - only this project's ship and scout records hold places
+ok - every local home shares one declared capacity per project origin, and remote homes do not count
+ok - an unreadable state directory or task record refuses admission rather than undercounting
+ok - concurrent spawns can never both take the last place
+ok - a spawn that fails after admission leaves no record and holds no place
+ok - capacity, task record, and registry read failures refuse admission
+ok - an unreadable declaration refuses every fresh spawn rather than guessing the limit
+ok - a batch reports a capacity deferral as deferred, not failed
+ok - an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything

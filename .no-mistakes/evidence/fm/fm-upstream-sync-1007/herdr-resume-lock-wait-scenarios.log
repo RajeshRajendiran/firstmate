@@ -1,0 +1,4 @@
+ok - real Herdr lab: opted-in concurrent cross-home recoveries replace exact husks under one session lock with no focus drift
+ok - real Herdr lab: default resumed identity refuses session lock contention
+ok - real Herdr lab: --herdr-resume-lock-wait waits out session lock contention instead of refusing
+ok - real Herdr lab validation completed on Herdr 0.9.3 with the default-session tripwire intact
