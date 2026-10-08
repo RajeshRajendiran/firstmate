@@ -141,12 +141,13 @@
 # Why Treehouse's own state cannot answer this for crewmate slots, and why the
 # claim file sits on top of it, is owned by bin/fm-wake-lib.sh's slot-owner
 # claim comment.
-# After the slot is successfully returned and its claim released, a clean slot
-# whose work was proven landed by the checks above is reset to a detached HEAD
-# at the freshly fetched default branch. This keeps squash-merged tasks from
-# parking the slot on pre-squash commits that Treehouse would otherwise refuse
-# to reuse. Dirty slots, slots another live task record still names, slots that
-# are not Treehouse pool slots, and forced teardowns are left untouched.
+# After the slot is successfully returned, and before this task's claim on it is
+# released, a clean slot whose work was proven landed by the checks above is
+# reset to a detached HEAD at the freshly fetched default branch. This keeps
+# squash-merged tasks from parking the slot on pre-squash commits that Treehouse
+# would otherwise refuse to reuse. Dirty slots, slots another live task record
+# still names, slots that are not Treehouse pool slots, and forced teardowns are
+# left untouched.
 # The recorded endpoint's exact task identity and the record's spawn incarnation
 # are validated separately
 # before cleanup. Its current working directory is only incidental process
