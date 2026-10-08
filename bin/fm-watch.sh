@@ -2496,6 +2496,10 @@ WATCHER_PID=${BASHPID:-$$}
 EVICTED_PID=
 EVICTED_BEAT_AGE=
 BEAT="$STATE/.last-watcher-beat"
+# Armed before acquisition so a stop arriving the instant the lock becomes ours
+# still releases it; watcher_cleanup touches the lock only when it names us.
+trap watcher_cleanup EXIT
+watcher_stop_signals
 while ! fm_lock_try_acquire "$WATCH_LOCK"; do
   if [ -n "${FM_LOCK_HELD_PID:-}" ]; then
     if [ -e "$BEAT" ]; then
@@ -2523,8 +2527,6 @@ while ! fm_lock_try_acquire "$WATCH_LOCK"; do
   fi
   exit 0
 done
-trap watcher_cleanup EXIT
-watcher_stop_signals
 printf '%s\n' "$FM_HOME" > "$WATCH_LOCK/fm-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
