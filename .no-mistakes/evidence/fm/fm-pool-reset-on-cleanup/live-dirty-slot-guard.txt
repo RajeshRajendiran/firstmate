@@ -1,0 +1,31 @@
+== [fixed/dirty] real treehouse v3.1.2
+
+$ treehouse get --lease   (task-x1 acquires a slot)
+/tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/1/project
+origin/main is now squash commit 1947380; pre-squash head c336814
+
+$ git merge-base --is-ancestor <slot HEAD> origin/main  (treehouse reuse test)
+NOT an ancestor -> treehouse will not reuse as-is
+
+$ fm-teardown.sh task-x1    (fixed scripts)
+REFUSED: worktree /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/1/project has uncommitted changes.
+teardown exit=1
+
+$ slot after teardown
+HEAD=c336814 (fm/task-x1) origin/main=1947380 dirty=[?? scratch.txt ]
+
+$ treehouse status
+base  main  (repository default)
+1     leased       /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/1/project  [fm/task-x1]
+
+$ treehouse get --lease   (next worker)
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/2/project. Run 'treehouse return /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/2/project' to release it.
+next worker got: /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/2/project
+RESULT: slot NOT reused (new slot created)
+next worker HEAD=1947380 origin/main=1947380
+
+$ treehouse status
+base  main  (repository default)
+1     leased       /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/1/project  [fm/task-x1]
+2     leased       /tmp/nmlive/lab.ZpS4/pool/.treehouse/project-bbdeea/2/project  (detached)

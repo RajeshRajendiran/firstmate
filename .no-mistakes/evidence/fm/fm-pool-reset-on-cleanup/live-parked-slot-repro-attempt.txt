@@ -1,0 +1,17 @@
+$ treehouse status   (slot parked on pre-squash f241b93)
+base  main  (repository default)
+1     available    /tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project  (detached)
+$ treehouse get   (interactive, in a pane like a crewmate spawn)
+🌳 Entered worktree at /tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project. Type 'exit' to return.
+agent@v2202609421980523939:/tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project$ pwd > /tmp/nmlive/parked.8KdA/got
+agent@v2202609421980523939:/tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project$
+got /tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project
+RESULT: parked slot reused
+$ freshen_pool_worktree_base <parked slot>   (the shared reset the teardown now runs)
+reset-ok
+slot HEAD now 38f1f7f (HEAD), origin/main 38f1f7f
+$ treehouse get --lease
+got /tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project
+RESULT: reset slot reused
+base  main  (repository default)
+1     leased       /tmp/nmlive/parked.8KdA/pool/.treehouse/project-d8e009/1/project  (detached)

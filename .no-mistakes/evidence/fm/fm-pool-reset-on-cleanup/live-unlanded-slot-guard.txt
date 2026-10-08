@@ -1,0 +1,27 @@
+== [fixed/unlanded] real treehouse v3.1.2
+
+$ treehouse get --lease   (task-x1 acquires a slot)
+/tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/1/project
+
+$ fm-teardown.sh task-x1    (fixed scripts)
+REFUSED: worktree /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/1/project has work not on any remote and not landed.
+teardown exit=1
+
+$ slot after teardown
+HEAD=19c0d24 (fm/task-x1) origin/main=e1d7804 dirty=[]
+
+$ treehouse status
+base  main  (repository default)
+1     leased       /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/1/project  [fm/task-x1]
+
+$ treehouse get --lease   (next worker)
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/2/project. Run 'treehouse return /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/2/project' to release it.
+next worker got: /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/2/project
+RESULT: slot NOT reused (new slot created)
+next worker HEAD=e1d7804 origin/main=e1d7804
+
+$ treehouse status
+base  main  (repository default)
+1     leased       /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/1/project  [fm/task-x1]
+2     leased       /tmp/nmlive/lab.v7eB/pool/.treehouse/project-cc74e8/2/project  (detached)

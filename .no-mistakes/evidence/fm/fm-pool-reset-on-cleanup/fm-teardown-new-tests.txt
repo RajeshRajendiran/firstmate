@@ -1,0 +1,3 @@
+ok - squash-merged task slot is reset to default and is reusable
+ok - dirty landed slot is left untouched
+ok - unlanded work leaves the slot untouched

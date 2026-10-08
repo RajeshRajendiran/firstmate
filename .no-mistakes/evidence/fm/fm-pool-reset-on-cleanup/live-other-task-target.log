@@ -1,0 +1,26 @@
+
+### acquire slot with real treehouse
+slot=/tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/1/project
+
+### squash-merge on origin (new single commit on main), delete PR branch
+
+### slot before teardown
+HEAD=b0441df origin/main=1158f9e
+HEAD is NOT an ancestor of main (pre-squash)
+
+### run fm-teardown.sh task-x1 (bin=/home/agent/.no-mistakes/worktrees/37339719b87e/01M4D450FTE0YHQXSSAZNW1W5B/bin)
+REFUSED: task task-x1's recorded worktree /tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/1/project is also task task-y2's recorded worktree.
+Returning that pool slot would kill task-y2's processes and reset its copy, so nothing was changed - not even with --force.
+teardown exit=1
+
+### slot after teardown
+HEAD=b0441df branch=HEAD status=[]
+HEAD is NOT an ancestor of main
+base  main  (repository default)
+1     leased       /tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/1/project  (detached)
+
+### next worker: treehouse get --lease
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/2/project. Run 'treehouse return /tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/2/project' to release it.
+next=/tmp/fm-lab.bTJrZt/pool/.treehouse/project-6692db/2/project
+RESULT: different slot (slot was NOT reused)

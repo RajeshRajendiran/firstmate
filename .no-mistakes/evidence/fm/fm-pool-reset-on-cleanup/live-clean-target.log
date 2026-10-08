@@ -1,0 +1,25 @@
+
+### acquire slot with real treehouse
+slot=/tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project
+
+### squash-merge on origin (new single commit on main), delete PR branch
+
+### slot before teardown
+HEAD=7551c7b origin/main=4aa7d95
+HEAD is NOT an ancestor of main (pre-squash)
+
+### run fm-teardown.sh task-x1 (bin=/home/agent/.no-mistakes/worktrees/37339719b87e/01M4D450FTE0YHQXSSAZNW1W5B/bin)
+teardown: reset idle slot /tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project to the current default branch
+teardown exit=0
+
+### slot after teardown
+HEAD=4aa7d95 branch=HEAD status=[]
+HEAD is ancestor of main
+base  main  (repository default)
+1     available    /tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project  (detached)
+
+### next worker: treehouse get --lease
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project. Run 'treehouse return /tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project' to release it.
+next=/tmp/fm-lab.3G3bUs/pool/.treehouse/project-d0f7b7/1/project
+RESULT: same slot reused
