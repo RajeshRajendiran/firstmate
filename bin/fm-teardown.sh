@@ -141,6 +141,13 @@
 # Why Treehouse's own state cannot answer this for crewmate slots, and why the
 # claim file sits on top of it, is owned by bin/fm-wake-lib.sh's slot-owner
 # claim comment.
+# After the slot is successfully returned, and before this task's claim on it is
+# released, a clean slot whose work was proven landed by the checks above is
+# reset to a detached HEAD at the freshly fetched default branch. This keeps
+# squash-merged tasks from parking the slot on pre-squash commits that Treehouse
+# would otherwise refuse to reuse. Dirty slots, slots another live task record
+# still names, slots that are not Treehouse pool slots, and forced teardowns are
+# left untouched.
 # The recorded endpoint's exact task identity and the record's spawn incarnation
 # are validated separately
 # before cleanup. Its current working directory is only incidental process
@@ -360,6 +367,7 @@ for _teardown_source in \
   fm-cursor-lib.sh \
   fm-nm-run-lib.sh \
   fm-wake-lib.sh \
+  fm-treehouse-base-lib.sh \
   fm-path-lib.sh \
   fm-lease-lib.sh
 do
@@ -417,6 +425,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 }
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-treehouse-base-lib.sh
+. "$SCRIPT_DIR/fm-treehouse-base-lib.sh"
 # Supervision lease guard: post-landing cleanup is overlap territory between
 # the two Pi supervision actors; refuse while the OTHER actor holds this
 # task's live lease (contract: bin/fm-lease-lib.sh; no-op in homes without
@@ -1350,14 +1360,14 @@ elif [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
 fi
 
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  local dir=${1:-$PROJ} ref branch
+  ref=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
   if [ -n "$ref" ]; then
     echo "${ref#origin/}"
     return 0
   fi
   for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
+    if git -C "$dir" show-ref --verify --quiet "refs/heads/$branch"; then
       echo "$branch"
       return 0
     fi
@@ -1881,6 +1891,62 @@ teardown_treehouse_return() {
 
   echo "teardown: $label return failed: git index.lock signature persisted across ${max_retries} retries (waiting ${TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS}s each) even after the lock file disappeared" >&2
   return 1
+}
+
+# After a treehouse worktree has been returned to the pool, move an idle,
+# clean, landed slot to a detached HEAD at the freshly fetched default branch.
+# This is what keeps a squash-merged task's slot reusable: the branch's own
+# pre-squash commits are not ancestors of the default branch, so Treehouse's
+# own "safe to reset" check would otherwise leave the slot parked forever.
+# It is best-effort after the return succeeded: a dirty slot, a slot another
+# live task record still names, a slot that is not a Treehouse pool slot, a
+# forced teardown, or any other unsafe condition is left untouched and logged
+# rather than making the already-landed teardown fail.
+teardown_treehouse_reset_idle_slot() { # <worktree>
+  local worktree=$1 status other_rc
+  [ -d "$worktree" ] || return 0
+
+  [ "$FORCE" != "--force" ] || {
+    echo "teardown: skipping idle-slot reset for $worktree under --force" >&2
+    return 0
+  }
+  case "$KIND" in
+    scout|secondmate)
+      echo "teardown: skipping idle-slot reset for $worktree ($KIND work is not proven landed)" >&2
+      return 0
+      ;;
+  esac
+
+  fm_treehouse_pool_slot "$PROJ" "$worktree" || {
+    echo "teardown: $worktree is not a Treehouse pool slot; skipping idle-slot reset" >&2
+    return 0
+  }
+
+  if ! status=$(git -C "$worktree" -c core.quotePath=false status --porcelain 2>/dev/null); then
+    echo "teardown: cannot inspect $worktree for idle-slot reset; leaving it untouched" >&2
+    return 0
+  fi
+  if [ -n "$status" ]; then
+    echo "teardown: idle slot $worktree is not clean; leaving it untouched" >&2
+    return 0
+  fi
+
+  other_rc=0
+  fm_treehouse_slot_recorder "$META" "$STATE" "$worktree" || other_rc=$?
+  if [ "$other_rc" -eq 0 ]; then
+    echo "teardown: idle slot $worktree is still named by task $FM_TREEHOUSE_SLOT_OTHER_ID; leaving it untouched" >&2
+    return 0
+  fi
+  if [ "$other_rc" -ne 1 ]; then
+    echo "teardown: cannot tell whether another task still names $worktree; leaving it untouched" >&2
+    return 0
+  fi
+
+  if ! freshen_pool_worktree_base "$worktree"; then
+    echo "teardown: could not refresh idle slot $worktree to the current default branch; leaving it untouched" >&2
+    return 0
+  fi
+  echo "teardown: reset idle slot $worktree to the current default branch" >&2
 }
 
 report_worktree_dirt() {
@@ -3572,6 +3638,10 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }
+  # Once the slot is back in the pool, reset a clean, landed, unclaimed slot to
+  # the current default branch so Treehouse can reuse it. This is best-effort:
+  # any unsafe condition leaves the slot untouched rather than failing teardown.
+  teardown_treehouse_reset_idle_slot "$WT"
   # The slot is back in the pool, so this task's claim on it is spent. Dropping
   # it here - and only after a return that succeeded - keeps a returned slot
   # unclaimed until its next holder claims it, and leaves the claim in place
