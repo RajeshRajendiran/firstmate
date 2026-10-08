@@ -140,6 +140,53 @@ test_singleton_start() {
   pass "simultaneous watcher starts leave exactly one live process"
 }
 
+test_term_after_lock_acquisition_runs_cleanup() {
+  local dir state fakebin out holder held release pid i status=0
+  dir=$(make_case term-after-lock)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  held="$dir/wake-lock-held"
+  release="$dir/release-wake-lock"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$FM_WAKE_QUEUE_LOCK" || exit 1
+    : > "$2"
+    while [ ! -e "$3" ]; do sleep 0.02; done
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  ' _ "$LIB" "$held" "$release" &
+  holder=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -e "$held" ]; do
+    sleep 0.02
+    i=$((i + 1))
+  done
+  [ -e "$held" ] || fail "wake lock holder did not start"
+
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$pid" ] && break
+    sleep 0.02
+    i=$((i + 1))
+  done
+  [ "$(cat "$state/.watch.lock/pid" 2>/dev/null || true)" = "$pid" ] \
+    || fail "watcher did not acquire its lock before the recovery wait"
+  kill -TERM "$pid" || fail "could not stop watcher during recovery wait"
+  sleep 0.1
+  : > "$release"
+  wait "$holder" || fail "wake lock holder did not release"
+  wait_for_exit "$pid" 100 || status=$?
+  [ "$status" -ne 124 ] || fail "watcher did not stop during the recovery wait"
+  [ ! -e "$state/.watch.lock" ] && [ ! -L "$state/.watch.lock" ] \
+    || fail "TERM after watcher lock acquisition left the singleton lock behind"
+  [ -f "$state/.watcher-down" ] \
+    || fail "TERM after watcher lock acquisition did not publish downtime"
+  pass "TERM after singleton acquisition runs watcher cleanup"
+}
+
 test_stale_watch_lock_reclaimed() {
   local dir state fakebin out dead_pid pid live lock_pid i
   dir=$(make_case stale-lock)
@@ -1552,6 +1599,7 @@ test_pid_identity_is_locale_invariant
 test_pid_identity_is_terminal_width_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
 test_msys_pid_identity_uses_proc
+test_term_after_lock_acquisition_runs_cleanup
 test_stale_watch_lock_reclaimed
 test_stale_watch_reclaim_publishes_before_clear
 test_live_stale_watch_lock_is_actionable
