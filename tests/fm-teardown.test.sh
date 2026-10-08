@@ -194,6 +194,7 @@ SH
 }
 
 # Like make_case, but lay out the worktree as a Treehouse pool slot:
+#   $CASE/home/state/             - Firstmate home for the project lock
 #   $CASE/pool/treehouse-state.json
 #   $CASE/pool/slot/repo   - the actual git worktree
 #   $CASE/wt               - a symlink to the slot repo for test helpers
@@ -206,6 +207,10 @@ make_treehouse_pool_case() {
   mv "$case_dir/wt" "$case_dir/pool/slot/repo"
   ln -s "$case_dir/pool/slot/repo" "$case_dir/wt"
   printf '{"version":"1.0.0"}\n' > "$case_dir/pool/treehouse-state.json"
+  # A pool slot makes teardown take the shared Treehouse project lock, which
+  # lives under the Firstmate home's state dir; pin a hermetic home so the lock
+  # never depends on the checkout running the test.
+  mkdir -p "$case_dir/home/state"
   printf '%s\n' "$case_dir"
 }
 
@@ -4510,7 +4515,7 @@ test_squash_merged_slot_resets_to_default_and_is_reusable() {
   git -C "$case_dir/project" fetch -q origin
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
@@ -4542,7 +4547,7 @@ test_dirty_landed_slot_is_left_unreset() {
   printf 'uncommitted edit\n' > "$case_dir/wt/feature.txt"
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
@@ -4562,7 +4567,7 @@ test_unlanded_slot_is_left_unreset() {
   before=$(git -C "$case_dir/wt" rev-parse HEAD)
 
   set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
 
