@@ -1,0 +1,12 @@
+skip: control: set FM_SUPERVISION_HOST_ATTENDED_LIVE_CONTROL_REF to a pre-fix ref to run the negative control
+# 11:32:30 positive step 1: primary idle (claude pid 2082616, 2.1.294 (Claude Code), model haiku); tracked Stop hook registered; config/supervision-host present; host pid 2089531 parked on watcher 2089788; listener runner 2090326; captain prompts so far: 1
+# 11:32:30 positive transcript: /home/agent/.claude/projects/-tmp-fm-sh-attended-live-kJQIIb-positive-fm/73134f35-cd27-4f66-a799-1d7fdad9869a.jsonl
+# 11:32:30 positive step 2: event 1 appended at 1791477150 (demo.status needs-decision)
+# 11:32:33 positive step 2: host log: 1791477153	pass-through	attended	main-only
+# 11:32:33 positive step 2: successor watcher pid 2096155 alive; ledger: epoch=1 owner_pid=2089187 outcome=arming updated_at=1791477148; marker: pending:downtime:2089788.1791477151.Uhd6B9
+# 11:32:39 positive step 2: rewake delivered at 1791477154 (Stop hook exited 2 with the banner); ledger: epoch=1 owner_pid=2089187 outcome=rewake updated_at=1791477154 session_pid=2082616 recovery_generation=2089788.1791477151.Uhd6B9
+# 11:32:39 positive step 2: primary turn ran: bin/fm-wake-drain.sh;bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 2089788.1791477151.Uhd6B9;
+# 11:32:40 positive step 3: turn end re-armed: 1791477160	start	gen=host-2103089-1791477160; still following successor 2096155
+# 11:32:43 positive step 3: event 2 appended at 1791477163
+not ok - positive: the arm following successor 2096155 did not deliver its close on event 2: arm_pid=2103590	watcher_pid=2096155	origin=attached	started_at=1791477160	ended_at=1791477161	exit_code=unknown	signal=unknown	reason=taken-over	beacon_age=2	lock_before=pid:2096155|identity:linux-starttime=61219082 cmdline-hex=62617368002f746d702f666d2d73682d617474656e6465642d6c6976652e6b4a514949622f706f7369746976652f666d2f62696e2f666d2d77617463682e736800	lock_after=pid:none|identity:none	successor=started:2104237
+rc=1

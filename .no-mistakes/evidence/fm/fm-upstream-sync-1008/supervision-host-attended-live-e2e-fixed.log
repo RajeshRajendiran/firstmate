@@ -1,0 +1,22 @@
+skip: control: set FM_SUPERVISION_HOST_ATTENDED_LIVE_CONTROL_REF to a pre-fix ref to run the negative control
+# 12:21:14 positive step 1: primary idle (claude pid 3625701, 2.1.294 (Claude Code), model haiku); tracked Stop hook registered; config/supervision-host present; host pid 3630347 parked on watcher 3630571; listener runner 3631047; captain prompts so far: 1
+# 12:21:14 positive transcript: /home/agent/.claude/projects/-tmp-fm-sh-attended-live-Pr6Mbv-positive-fm/e8c4be3e-b5f6-4896-8160-db8a9364265b.jsonl
+# 12:21:14 positive step 2: event 1 appended at 1791480074 (demo.status needs-decision)
+# 12:21:17 positive step 2: host log: 1791480077	pass-through	attended	main-only
+# 12:21:18 positive step 2: successor watcher pid 3634457 alive; ledger: epoch=1 owner_pid=3630027 outcome=arming updated_at=1791480072; marker: pending:downtime:3630571.1791480075.YY9uiL
+# 12:21:23 positive step 2: rewake delivered at 1791480078 (Stop hook exited 2 with the banner); ledger: epoch=1 owner_pid=3630027 outcome=rewake updated_at=1791480078 session_pid=3625701 recovery_generation=3630571.1791480075.YY9uiL
+# 12:21:23 positive step 2: primary turn ran: bin/fm-wake-drain.sh;bin/fm-wake-drain.sh --ack-through 4 --recovery-generation 3630571.1791480075.YY9uiL;
+# 12:21:26 positive step 3: turn end re-armed: 1791480085	start	gen=host-3639105-1791480084; took over successor 3634457, now owning watcher 3640134
+# 12:21:29 positive step 3: event 2 appended at 1791480089
+# 12:21:39 positive step 3/4: owned watcher 3640134 closed: arm_pid=3639504 watcher_pid=3640134 origin=started started_at=1791480085 ended_at=1791480092 exit_code=0 signal=none reason=actionable-signal
+# 12:21:39 positive step 3/4: its close was delivered: rewake at 1791480094; host log: 1791480093	pass-through	attended	main-only
+# 12:21:44 positive step 4: event 3 appended to the stand-in remote log at 1791480104
+# 12:21:55 positive step 4: listener mirrored it (1 ingested) and it was delivered at 1791480110; listener runner 3631047 -> 3631047, owned at every check
+# 12:21:59 positive step 5: event 4, a routine working line on task demo2, appended at 1791480119
+# 12:22:04 positive step 5: the host accepted it and confirmed its successor's handling handoff (marker announced:handling:3662144.1791480122.Cx7uvL at 1791480124); a needs-decision on demo2 landed then, before the turn's start
+# 12:22:04 positive step 5: host log: 1791480124	pass-through	attended	main-only; no engine turn
+# 12:22:05 positive step 5: rewake delivered at 1791480125; ledger: epoch=4 owner_pid=3660545 outcome=rewake updated_at=1791480125 session_pid=3625701 recovery_generation=3662144.1791480122.Cx7uvL
+# 12:22:09 positive step 5: primary turn ran: bin/fm-wake-drain.sh;bin/fm-wake-drain.sh --ack-through 12 --recovery-generation 3662144.1791480122.Cx7uvL;
+# 12:22:11 positive step 5: turn end re-armed: 1791480131	start	gen=host-3670840-1791480130; watcher 3671453 live; listener runner 3631047 still owned
+# 12:22:12 positive: captain prompts after setup: 0 (mirror holds only the setup prompt)
+ok - attended live (2.1.294 (Claude Code)): an idle primary is woken for four hand-offs, the successor's own close and a close that turned main-only at its turn included, with the listener owned throughout

@@ -1,0 +1,10 @@
+ok - runner and shared helpers isolate host Git config and preserve explicit config and outside commits
+ok - agent stand-in: a multicall sleep is refused, and the compiled stand-in survives a harness name
+ok - fm_touch_epoch preserves both epochs in the repeated DST hour
+ok - fake no-mistakes --version is the shared constant and overridable
+ok - init/doctor no-mistakes stub touches markers and refuses other verbs
+ok - fake gh authenticates and fake gh-axi reports the shared version
+ok - spawn fakebin answers pane path, logs -l payloads, and installs extra tools
+ok - send stubs log typed text and fake ssh records argv with a controllable exit
+ok - spawn-home layout writes harness pin, beat, and brief
+exit=0
