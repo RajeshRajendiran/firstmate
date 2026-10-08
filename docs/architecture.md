@@ -416,6 +416,7 @@ A slot's own owner claim, written by the spawn that takes it under the allocatio
 A claim naming a different task releases nothing, even alongside that task's contradictory record and even when the next task left no record the scan could reach.
 Teardown warns, names the claimant, and finishes only the task's own cleanup, however many other records share the slot.
 A relaunch into such a slot, or one another record still names, is refused before the old agent stops.
+After a clean slot is returned and its work proven landed, teardown resets it to a detached HEAD at the freshly fetched default branch so Treehouse can reuse it; dirty slots, slots another live task record still names, and slots whose work is not proven landed are left untouched.
 Spawn keeps every slot a local task record still names out of its allocation, so the pool never hands a recorded slot to a new task.
 Allocation and return serialize on one project lock per machine-local Firstmate tree: every home reachable through local parent links shares that lock, and a home seeded from another machine anchors its own, because a lock taken on this filesystem is neither held nor observable across that boundary.
 Before the worktree is returned, teardown concludes the task's own no-mistakes run when it is parked at a gate, including a run whose head the task copy cannot resolve - the shared runs-ledger continuation proof is the only recognition for that case, so cleanup never orphans a parked run the pipeline advanced past the submitted head.

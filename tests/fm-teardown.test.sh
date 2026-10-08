@@ -193,6 +193,22 @@ SH
   printf '%s\n' "$case_dir"
 }
 
+# Like make_case, but lay out the worktree as a Treehouse pool slot:
+#   $CASE/pool/treehouse-state.json
+#   $CASE/pool/slot/repo   - the actual git worktree
+#   $CASE/wt               - a symlink to the slot repo for test helpers
+# The project clone and origin are the same as make_case, so existing helpers
+# work unchanged. The symlink lets assertions inspect the slot after teardown.
+make_treehouse_pool_case() {
+  local name=$1 case_dir
+  case_dir=$(make_case "$name")
+  mkdir -p "$case_dir/pool/slot"
+  mv "$case_dir/wt" "$case_dir/pool/slot/repo"
+  ln -s "$case_dir/pool/slot/repo" "$case_dir/wt"
+  printf '{"version":"1.0.0"}\n' > "$case_dir/pool/treehouse-state.json"
+  printf '%s\n' "$case_dir"
+}
+
 # Write a meta file for the task. Args: case_dir mode kind
 write_meta() {
   local case_dir=$1 mode=$2 kind=$3
@@ -4480,6 +4496,86 @@ SH
   pass "a forced secondmate with a missing own adapter sibling refuses before child cleanup"
 }
 
+test_squash_merged_slot_resets_to_default_and_is_reusable() {
+  local case_dir rc pr_head origin_main
+  case_dir=$(make_treehouse_pool_case slot-reset-squash)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  # origin/main gains the squashed content; the local worktree stays on the
+  # pre-squash branch so the test can prove teardown moves it.
+  land_on_origin_main "$case_dir" feature.txt hello
+  git -C "$case_dir/project" fetch -q origin
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "slot-reset-squash: teardown should succeed when PR is merged"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "slot-reset-squash: teardown printed a REFUSED line"
+  grep -q "reset idle slot $case_dir/wt to the current default branch" "$case_dir/stderr" \
+    || fail "slot-reset-squash: idle slot was not reset"
+  [ -z "$(git -C "$case_dir/wt" status --porcelain)" ] \
+    || fail "slot-reset-squash: reset slot is not clean"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "HEAD" ] \
+    || fail "slot-reset-squash: reset slot is not detached"
+  origin_main=$(git -C "$case_dir/wt" rev-parse origin/main)
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$origin_main" ] \
+    || fail "slot-reset-squash: reset slot is not at origin/main"
+  git -C "$case_dir/wt" merge-base --is-ancestor HEAD main \
+    || fail "slot-reset-squash: reset slot HEAD is not an ancestor of main"
+  pass "squash-merged task slot is reset to default and is reusable"
+}
+
+test_dirty_landed_slot_is_left_unreset() {
+  local case_dir rc pr_head before
+  case_dir=$(make_treehouse_pool_case slot-dirty-landed)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  land_on_origin_main "$case_dir" feature.txt hello
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  before=$(git -C "$case_dir/wt" rev-parse HEAD)
+  printf 'uncommitted edit\n' > "$case_dir/wt/feature.txt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "slot-dirty-landed: teardown should refuse a dirty landed worktree"
+  grep -q REFUSED "$case_dir/stderr" || fail "slot-dirty-landed: no REFUSED line"
+  ! grep -q "reset idle slot" "$case_dir/stderr" || fail "slot-dirty-landed: reset ran on a dirty slot"
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$before" ] \
+    || fail "slot-dirty-landed: dirty slot moved during refused teardown"
+  pass "dirty landed slot is left untouched"
+}
+
+test_unlanded_slot_is_left_unreset() {
+  local case_dir rc before
+  case_dir=$(make_treehouse_pool_case slot-unlanded)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "unlanded work"
+  before=$(git -C "$case_dir/wt" rev-parse HEAD)
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "slot-unlanded: teardown should refuse unlanded work"
+  grep -q REFUSED "$case_dir/stderr" || fail "slot-unlanded: no REFUSED line"
+  ! grep -q "reset idle slot" "$case_dir/stderr" || fail "slot-unlanded: reset ran on unlanded work"
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$before" ] \
+    || fail "slot-unlanded: unlanded slot moved during refused teardown"
+  [ -e "$case_dir/state/task-x1.meta" ] \
+    || fail "slot-unlanded: task record removed on refused teardown"
+  pass "unlanded work leaves the slot untouched"
+}
+
 test_retained_sources_still_reach_the_ordinary_refusal() {
   local case_dir rc
   case_dir=$(make_case retained-sources)
@@ -4503,6 +4599,9 @@ test_missing_adapter_sibling_refuses_before_cleanup
 test_forced_child_missing_adapter_sibling_refuses_before_cleanup
 test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
+test_squash_merged_slot_resets_to_default_and_is_reusable
+test_dirty_landed_slot_is_left_unreset
+test_unlanded_slot_is_left_unreset
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
