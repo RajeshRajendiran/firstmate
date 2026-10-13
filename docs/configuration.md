@@ -573,6 +573,36 @@ See [`trace-context.md`](trace-context.md) for carrier semantics, supported rout
 
 See [`fleet-ledger.md`](fleet-ledger.md) for the opt-in setup, record contract, and limits.
 
+## Firstmate role (config/firstmate-role)
+
+The optional local, gitignored `config/firstmate-role` declares this home's relationship to the firstmate repository itself.
+Every home defaults to **user/operator** with no firstmate-upstream publication authority: ordinary project work and `/updatefirstmate` pulls are unaffected, but without an explicit grant no ship task on the firstmate repository may carry a publishing contract.
+For the agent's local diagnosis, workaround, and draft-only response to a firstmate bug, see [`firstmate-self-repo`](../.agents/skills/firstmate-self-repo/SKILL.md#when-a-firstmate-bug-surfaces-in-ordinary-use).
+
+The file holds exactly one directive line, with blank lines and `#` comment lines ignored:
+
+| Directive | Effect |
+| --- | --- |
+| `user` | The default; identical to an absent file. |
+| `maintainer <host>/<owner>/<repo>` | This home may dispatch publishing work that targets the one named firstmate upstream. |
+
+A scope names the publication target repository (where a pull request lands), normalized to lowercase for comparison, not a push destination.
+A fork maintainer contributing to the parent repository uses per-task consent rather than a second standing scope.
+Write the primary home's file by hand; firstmate never grants itself a role, and the file never travels through git.
+Supported secondmate propagation writes or removes the inherited copy as described below.
+A malformed, unreadable, or symlinked file - including one with a second directive anywhere - resolves to user/operator; the role fails closed rather than guessing.
+
+Authority is also available for one task at a time: `--upstream-consent <host>/<owner>/<repo>` on `bin/fm-brief.sh`, `bin/fm-spawn.sh`, and `bin/fm-promote.sh` records the captain's explicit approval in the task's delivery contract and metadata without changing the home's role.
+Role is never inferred from GitHub identity, forge permissions, remotes, repository ownership, authentication state, environment, or CI.
+`bin/fm-role.sh report` prints the resolved role with no network call, and the session-start digest shows it in the HOME ROLE subsection.
+
+`bin/fm-role-lib.sh` owns the fail-closed parser, self-repository detection, and the gate that `bin/fm-brief.sh`, `bin/fm-spawn.sh`, and `bin/fm-promote.sh` apply.
+The publication target is selected from the first configured remote in the order `upstream`, `github`, `origin`; see `bin/fm-role-lib.sh` for URL and local-path normalization.
+A task's project counts as the firstmate repository when it shares the code root's lineage - the same git common dir, or a root commit of the code root's history, which every fork, the parent, and any clone of either share - computed offline; undeterminable lineage (for example a shallow clone sharing no root commit) and an undeterminable publication target are refused, even under task consent.
+Secondmate homes inherit the primary's resolved role, never its raw file: a primary file that resolves to user for any reason propagates as revocation.
+In a secondmate home the file is honored only while the inheritance receipt `config/.fm-inherit-firstmate-role.generation` proves the exact bytes the primary last published (`bin/fm-config-inherit-lib.sh`); a role file with no matching receipt or a stale grant authorizes nothing.
+The receipt prevents accidental publication through supported paths; it proves consistency, not provenance, and is not a security boundary against a process that deliberately forges local records.
+
 ## Waiting worker spends no turns (config/wait-no-turns)
 
 The optional local, gitignored `config/wait-no-turns` presence flag opts this home into keeping a waiting worker from spending turns until it is answered.
@@ -1417,6 +1447,17 @@ It uses the same live secondmate discovery and propagation helper as bootstrap; 
 - The locked bootstrap inheritance pass uses the same placement-specific behavior; see `secondmate-provisioning` for the single contract owner.
 - That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 - Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
+
+## Forge selection (data/projects.md forge= token)
+
+A project with no `forge=` token is served by the GitHub tooling, `gh` and `gh-axi`, exactly as before the token existed, and the token changes nothing for existing entries.
+A remote-backed project on a Forgejo or Gitea server is registered with `forge=forgejo`, one value of the same closed `forge=` binding that Gerrit uses; `bin/fm-project-mode.sh`'s header owns its grammar, values, and refusals, and `bin/fm-project-mode.sh --forge <name>` reads it back.
+Firstmate passes the binding to `bin/fm-brief.sh --forge` at intake the same way it passes `--mode`, and `bin/fm-spawn.sh` refuses a brief whose forge disagrees with the registry; on `forgejo` the generated ship brief names `tea` instead of `gh-axi`.
+The URL-driven provider dispatch in [`bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh) recognizes a GitHub, GitLab, Gerrit, or Forgejo PR/MR/change URL once one exists, regardless of this token.
+
+A Forgejo (or Gitea) project needs `tea` on `PATH` plus a `tea login` registered for that project's host (`tea login add`); the login is matched to a PR's host automatically, never configured per project.
+A GitLab project needs no forge token, only `glab` on `PATH`, authenticated via `glab auth login`.
+[`docs/gitlab-merge-watch.md`](gitlab-merge-watch.md) and [`docs/forgejo-tea-integration.md`](forgejo-tea-integration.md) hold the empirically verified CLI behavior each provider's watch and merge path depends on.
 
 ## Watched tool updates (config/watched-tools.json)
 
@@ -2497,7 +2538,7 @@ FM_BUSY_TURN_MAX_SECS=3600         # maximum age without a completed turn or exp
 FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, and between repeated new-hash stale alarms for an ordinary crew task with an open backlog captain call; a structured until time can make an external-wait recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake, a provably-working pane whose own unelapsed declared wait or, where config/wedge-defer-parked-gate arms it, unanswered supervisor-owed validation gate defers its FM_STALE_ESCALATE_SECS escalation, and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; a captain-held transfer is never rechecked while the away-posture record exists, while an armed validation gate awaiting the supervisor's decision keeps this recheck in either posture
 FM_SECONDMATE_WAKE_STALL_SECS=180  # minimum interval with no change of the oldest actionable foreign wake-queue row (it advances as the mate drains, and a queue reprovisioned under the same task id starts a fresh interval at whatever sequence it restarts) before an endpoint-recorded local secondmate produces one durable parent wake-loop-stall notification for that no-progress episode; a mate that is provably inside an active turn (an exact busy verdict) does not escalate until that same no-progress interval reaches FM_BUSY_TURN_MAX_SECS above; a mate whose busy class is exactly idle, whose agent is alive, and whose composer is not pending is rung once so its own home can drain, and the parent notification is withheld until that same row stays frozen for another stall interval; unknown or ring-unsafe panes keep the parent alarm; declared external-wait pause rows are excluded, and zero or invalid values use 180
 FM_SECONDMATE_LIVENESS_SECS=60   # seconds between watcher probes of each registered secondmate's recorded endpoint through bin/fm-secondmate-liveness-lib.sh, which relaunches only a positively `dead` or `missing` endpoint through the ordinary guarded fm-spawn.sh --secondmate path and emits exactly one check wake per relaunch; zero or invalid values use 60
-FM_SECONDMATE_LIVENESS_TIMEOUT=120   # seconds bounding one watcher-driven relaunch, so a wedged spawn cannot stall the poll; zero or invalid values use 120
+FM_SECONDMATE_LIVENESS_TIMEOUT=120   # seconds allowed separately for a watcher-driven relaunch's per-home lock wait and its spawn execution; a lock-wait timeout skips recovery without touching the endpoint or recording an attempt; zero or invalid values use 120
 FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS=3   # automatic relaunch attempts allowed per mate inside the window before the watcher parks auto-relaunch behind state/.secondmate-relaunch-bound-<id> and escalates once; a later live probe clears the marker and restores the full attempt budget (the ledger keeps its history behind a `rearmed` row); zero or invalid values use 3
 FM_SECONDMATE_LIVENESS_WINDOW_SECS=3600   # window the relaunch bound counts state/.secondmate-relaunch-<id> attempt lines over; the file is also the durable per-mate relaunch record; zero or invalid values use 3600
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
