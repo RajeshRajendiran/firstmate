@@ -564,9 +564,8 @@ portable_parallel_lane_weight() {
 
 # Portable parallel shard 1: LPT balance of the proven-isolated set over the
 # hints above. Stored order agrees with this lane's --list-scheduled output.
-# tests/fm-pi-primary-types.test.sh belongs to this lane because
-# this is the parallel job that installs the Pi package; moving it needs that
-# workflow step moved with it.
+# tests/fm-pi-primary-types.test.sh runs the production-consumer typecheck here;
+# its own header owns temporary dependency provisioning.
 list_portable_parallel_1() {
   cat <<'EOF'
 tests/fm-pr-merge.test.sh
