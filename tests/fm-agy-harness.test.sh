@@ -422,6 +422,7 @@ agy_herdr_composer_state() {  # <screen-file> <agent-get-json-file>
     . "$0/bin/fm-composer-lib.sh"
     . "$0/bin/backends/herdr.sh"
     fm_backend_herdr_target_ready() { fm_backend_herdr_parse_target "$1"; }
+    fm_backend_herdr_target_observable() { fm_backend_herdr_parse_target "$1"; }
     fm_backend_herdr_cli() {
       case "$*" in
         *"pane read"*) cat "$AGY_FIX_SCREEN" ;;
