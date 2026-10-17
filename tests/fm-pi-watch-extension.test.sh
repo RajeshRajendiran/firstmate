@@ -5216,6 +5216,59 @@ EOF
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
 
+# Both OpenCode plugin writes to a child's stdin can fail with EPIPE, because
+# the child is free to exit without reading. An unhandled stdin error is a
+# thrown 'error' event that takes the whole host process down with it. Here the
+# guard's own blind-turn text is larger than a pipe buffer, so the write to an
+# encoder that exits without reading cannot complete: the guard must report the
+# encoder's refusal by staying silent, not by killing the session.
+test_opencode_turnend_guard_survives_an_encoder_that_never_reads_stdin() {
+  local guard_plugin repo guard_log out status
+  guard_plugin="$ROOT/.opencode/plugins/fm-primary-turnend-guard.js"
+  repo="$TMP_ROOT/opencode-guard-encoder-root"
+  guard_log="$TMP_ROOT/opencode-guard-encoder-guard.log"
+  mkdir -p "$repo/bin"
+  cat > "$repo/bin/fm-turnend-guard.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'guard\n' >> "${FM_GUARD_LOG:?}"
+printf 'watcher: FAILED - %s\n' "$(head -c 200000 /dev/zero | tr '\0' 'x')" >&2
+exit 2
+SH
+  cat > "$repo/bin/fm-operational-input.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'operational-input: refused\n' >&2
+exit 1
+SH
+  chmod +x "$repo/bin/fm-turnend-guard.sh" "$repo/bin/fm-operational-input.sh"
+  out=$(GUARD_PLUGIN="$guard_plugin" WORKTREE="$repo" FM_GUARD_LOG="$guard_log" node 2>&1 <<'EOF'
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const guardMod = await import(pathToFileURL(process.env.GUARD_PLUGIN).href);
+let prompts = 0;
+const client = { session: { promptAsync: async () => { prompts += 1; } } };
+const guardHooks = await guardMod.FmPrimaryTurnendGuard({
+  client,
+  directory: process.env.WORKTREE,
+  worktree: process.env.WORKTREE,
+});
+await guardHooks.event({ event: { type: "session.idle", properties: { sessionID: "session-test" } } });
+if (!existsSync(process.env.FM_GUARD_LOG)) {
+  console.error("turn-end guard did not run");
+  process.exit(1);
+}
+if (prompts !== 0) {
+  console.error(`guard prompted ${prompts} times despite an encoder that refused the input`);
+  process.exit(1);
+}
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "OpenCode turn-end guard must survive an encoder that never reads its stdin ($out)"
+  [ -z "$out" ] || fail "OpenCode guard encoder test printed output: $out"
+  pass "OpenCode turn-end guard survives an encoder that never reads stdin"
+}
+
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop
@@ -5276,3 +5329,4 @@ test_opencode_established_empty_close_honors_retry_limit
 test_opencode_actionable_close_rechecks_session_lock
 test_opencode_watch_arm_coordinates_with_turnend_guard
 test_opencode_healthy_arm_output_does_not_suppress_guard
+test_opencode_turnend_guard_survives_an_encoder_that_never_reads_stdin
