@@ -930,20 +930,40 @@ When it is absent or contains `default`, crewmates mirror the firstmate's own ha
 
 ### Choose the secondmate harness
 
-`config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
-The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
+`config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line. The file belongs to the primary, is not inherited by secondmate homes, and secondmates do not launch secondmates.
+Without a `mate <secondmate-id>:` declaration, the first non-empty, non-comment line supplies the default, parsed as `<harness> [<model>] [<effort>]`; later lines and additional tokens retain their legacy ignored behavior.
+With an override declaration, at most one non-empty, non-comment line without that prefix supplies the default.
+Any number of override lines can pin named secondmates rather than the whole home:
+
+```text
+mate <secondmate-id>: <harness> [<model>] [<effort>]
+```
+
+Override ids use letters, digits, dots, underscores, and hyphens, and matching is case-sensitive.
+A mate line replaces the default line for that exact secondmate id, so raising the default pin cannot migrate a mate the captain pinned separately.
+Precedence is the override for that mate's id, then the default line, then `config/crew-harness`, then the primary's own harness.
+An override whose harness token is `default` skips the file's default line and falls back to `config/crew-harness`, then the primary's own harness, contributing no model or effort.
+Blank lines and `#` comments stay legal anywhere, and a mate line is honored wherever it sits in the file.
+In a file that declares an override, a second default line, two overrides for one id, an override with no tokens or more than three, or a `mate` keyword naming an invalid secondmate id is an actionable error: resolution exits nonzero naming the file's line number and prints no token, so malformed pin config cannot resolve to a fallback in silence.
+In a file that declares no override, none of that applies: the legacy first-line rule governs, so an existing, already-valid file is read exactly as it was before this grammar existed.
 
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
 When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
 
-`fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
+[`fm-harness.sh`](../bin/fm-harness.sh)'s header owns the resolver commands and optional secondmate-id argument.
+Without an id they select the default line only; model and effort output is empty when no token applies.
+When the file declares an override, every resolver read validates the whole file, even when no id is supplied or the malformed line concerns another mate.
+Every resolution site that knows which mate it is launching passes that id, so spawn, control-plane relaunch, and secondmate restart all land on one decision.
+`config/crew-harness` remains a bare adapter-name file and is never parsed for a model.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
 For a separate account choice for one local secondmate, see [per-secondmate account pins](#per-secondmate-account-pins).
+The regression coverage is in [`fm-secondmate-harness.test.sh`](../tests/fm-secondmate-harness.test.sh), [`fm-control-relaunch.test.sh`](../tests/fm-control-relaunch.test.sh), and [`fm-secondmate-restart.test.sh`](../tests/fm-secondmate-restart.test.sh).
 
 ### Per-launch overrides and inherited defaults
 
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; for a local route, an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
+An explicit harness also bypasses reading the pin file during spawn or control-plane relaunch, so malformed unused pin configuration cannot block that override. A relaunch supplying explicit `--harness`, `--model`, and `--effort` therefore does not read this configuration.
 
 Remote secondmate routes accept verified harness adapters only and reject raw launch commands.
 When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
@@ -1274,7 +1294,7 @@ Firstmate resolves the rule's profile object or array under `AGENTS.md` section 
 
 - When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
 - Batch spawns satisfy the same requirement with a shared `--harness`.
-- Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
+- Secondmate spawns are exempt and resolve through `config/secondmate-harness` using the registered mate's id; see [Choose the secondmate harness](#choose-the-secondmate-harness) for pin precedence and legacy parsing.
 
 **Contract owners**
 
