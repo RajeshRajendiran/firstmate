@@ -1,0 +1,124 @@
+# remote-seeded Treehouse spawn command
+$ FM_HOME=/tmp/fm-spawn-pool-base-freshen.nfDfgD/remote-seeded/home bin/fm-spawn.sh pool-remote-seeded-r13 /tmp/fm-spawn-pool-base-freshen.nfDfgD/remote-seeded/project --scout
+spawned pool-remote-seeded-r13 harness=codex kind=scout window=firstmate:fm-pool-remote-seeded-r13 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/remote-seeded/pool
+exit=0
+published worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/remote-seeded/pool
+resolved project lock=/tmp/fm-spawn-pool-base-freshen.nfDfgD/remote-seeded/home/state/.treehouse-project-a8774a05212b1fdf35d45373f733e711a7f1f504.lock
+ok - a remote-seeded secondmate home allocates and launches from its Treehouse pool
+ok - spawn is never handed a pool slot another task record in this or a registered local home still names
+ok - a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort
+ok - a launch refused after its slot claim leaves the pool for a retry and a second task
+ok - a refused polytoken launch leaves its per-id paths alone while another spawn holds the per-id lock
+ok - a non-polytoken launch refused after its slot claim keeps main's abort behavior
+ok - the treehouse-get isolation refusal points only at what survives the abort
+# evidence begin: linked-home spawn, returned=primary
+$ bin/fm-spawn.sh pool-linked-primary-r12 /tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary/secondmate --scout
+error: treehouse get did not enter an isolated worktree within 60s (last seen '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary/project': it is the repository's primary checkout (its git dir is the spawning project's common git dir); spawning project '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary/secondmate'); inspect window firstmate:fm-pool-linked-primary-r12
+exit=1
+primary HEAD before=e9e2bc44746bbd0a1392f17038ae63a0df143814 after=e9e2bc44746bbd0a1392f17038ae63a0df143814
+primary reflog before:
+e9e2bc4 HEAD@{0}: commit (initial): initial
+primary reflog after:
+e9e2bc4 HEAD@{0}: commit (initial): initial
+FETCH_HEAD absent
+task metadata absent
+# evidence end
+ok - linked spawning home: primary preserves the primary before any refresh
+# evidence begin: linked-home spawn, returned=primary-alias
+$ bin/fm-spawn.sh pool-linked-primary-alias-r12 /tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary-alias/secondmate --scout
+error: treehouse get did not enter an isolated worktree within 60s (last seen '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary-alias/primary-alias': it is the repository's primary checkout (its git dir is the spawning project's common git dir); spawning project '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-primary-alias/secondmate'); inspect window firstmate:fm-pool-linked-primary-alias-r12
+exit=1
+primary HEAD before=d378ac05ee0720846c3aa23c7541f54998639599 after=d378ac05ee0720846c3aa23c7541f54998639599
+primary reflog before:
+d378ac0 HEAD@{0}: commit (initial): initial
+primary reflog after:
+d378ac0 HEAD@{0}: commit (initial): initial
+FETCH_HEAD absent
+task metadata absent
+# evidence end
+ok - linked spawning home: primary-alias preserves the primary before any refresh
+# evidence begin: linked-home spawn, returned=spawning
+$ bin/fm-spawn.sh pool-linked-spawning-r12 /tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-spawning/secondmate --scout
+error: treehouse get did not enter an isolated worktree within 60s (last seen '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-spawning/secondmate': it is the spawning project itself; spawning project '/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-spawning/secondmate'); inspect window firstmate:fm-pool-linked-spawning-r12
+exit=1
+primary HEAD before=3f22046d21536d8b9d4ea41b6f102e69cc6579f4 after=3f22046d21536d8b9d4ea41b6f102e69cc6579f4
+primary reflog before:
+3f22046 HEAD@{0}: commit (initial): initial
+primary reflog after:
+3f22046 HEAD@{0}: commit (initial): initial
+FETCH_HEAD absent
+task metadata absent
+# evidence end
+ok - linked spawning home: spawning preserves the primary before any refresh
+# evidence begin: linked-home spawn, returned=scout
+$ bin/fm-spawn.sh pool-linked-scout-r12 /tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-scout/secondmate --scout
+spawned pool-linked-scout-r12 harness=codex kind=scout window=firstmate:fm-pool-linked-scout-r12 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-scout/pool
+exit=0
+primary HEAD before=a3053a14ec074bfc62243ee1f03d6cafc205d417 after=a3053a14ec074bfc62243ee1f03d6cafc205d417
+primary reflog before:
+a3053a1 HEAD@{0}: commit (initial): initial
+primary reflog after:
+a3053a1 HEAD@{0}: commit (initial): initial
+FETCH_HEAD absent
+saved task metadata:
+window=firstmate:fm-pool-linked-scout-r12
+endpoint_task_id=pool-linked-scout-r12
+worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-scout/pool
+project=/tmp/fm-spawn-pool-base-freshen.nfDfgD/linked-scout/secondmate
+harness=codex
+approval_mode=bypass
+kind=scout
+tasktmp=/tmp/fm-pool-linked-scout-r12
+model=default
+effort=default
+spawn_gen=s1793647272.2069042.22556
+worker HEAD=7f4e21298fd36be22603332e42e1e7c7b96b7589 origin/main=7f4e21298fd36be22603332e42e1e7c7b96b7589
+# evidence end
+ok - linked spawning home: scout preserves the primary before any refresh
+# observed spawn: spawned pool-current-base-r1 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-current-base-r1 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/current-base/pool
+# observed base: HEAD=8db392ba3832ecd3c39fd18f7052bbdefefc680d origin/main=8db392ba3832ecd3c39fd18f7052bbdefefc680d advanced-main=must survive a newly spawned branch
+ok - a stale pooled worktree refreshes to current origin/main before a crew branch is created
+ok - --base-branch picks the copy's starting point and is recorded; a missing or local-only base refuses
+ok - a spawn refuses when --base-branch and the brief's Base branch lines disagree
+ok - a Base branch line in the captain's intent neither blocks nor redirects a spawn
+ok - a based scout on a forge=gerrit project is refused at spawn
+ok - a stale pooled worktree resolves and refreshes a non-main default branch
+# observed direct-pr spawn: spawned pool-direct-pr-r3 harness=codex kind=ship mode=direct-PR yolo=off window=firstmate:fm-pool-direct-pr-r3 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/direct-pr/pool
+# observed scout spawn: spawned pool-scout-r3 harness=codex kind=scout window=firstmate:fm-pool-scout-r3 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/scout/pool
+ok - direct-PR ships and scouts both refresh stale pooled worktrees before launch
+# observed dirty refusal: error: pooled worktree '/tmp/fm-spawn-pool-base-freshen.nfDfgD/dirty-refusal/pool' is not clean; refusing to discard uncommitted work while refreshing its base; preserved=keep this local work
+ok - a dirty pooled worktree is refused without discarding its local work
+# observed unresolved-default refusal: error: could not resolve origin's current default branch for pooled worktree '/tmp/fm-spawn-pool-base-freshen.nfDfgD/unresolved-default/pool'; refusing to launch from a potentially stale base
+ok - an unresolved remote default branch refuses the pooled worktree
+# observed unreachable-origin refusal: error: could not fetch origin for pooled worktree '/tmp/fm-spawn-pool-base-freshen.nfDfgD/unreachable-origin/pool'; refusing to launch from a potentially stale base
+ok - an unreachable origin refuses a potentially stale pooled worktree
+# observed origin-less launch: spawned pool-originless-r6 harness=codex kind=ship mode=no-mistakes yolo=off window=firstmate:fm-pool-originless-r6 worktree=/tmp/fm-spawn-pool-base-freshen.nfDfgD/originless/pool
+ok - an origin-less pooled worktree launches as-is, skipping the freshness gate
+ok - a dirty origin-less pooled worktree is refused without discarding its local work
+ok - an origin configuration without a URL refuses the pooled worktree
+ok - an empty origin configuration section refuses the pooled worktree
+ok - an empty-only included origin section documents the accepted detection boundary
+ok - an inactive conditional origin include leaves the pooled worktree origin-less
+# observed stale-pin refusal: error: submodule 'ui' is checked out at 67e13ffb5dff6fd7a423665cb10f2ad0d8cde894, but this base records 984c197580aae1d554a2b779771bec782959d18b
+ok - an origin-less pool with a stale submodule pin refuses while naming both pins and no remedy
+ok - an unpushed submodule commit keeps the uncommitted-work refusal and survives it
+ok - work inside a submodule is still refused as uncommitted work, not called stale
+ok - a stale pin carrying real work is refused conservatively, never called stale
+ok - a stale pin beside other dirt yields the conservative refusal alone, with no stale-pin line
+ok - without the opt-in a local-only ship or a scout still starts from origin's tip while the primary leads
+# opted-in leading/no-mistakes: slot=afe0950fbc9b3c95ce6edb1d4b7db676aa92a5bc review base=origin/main
+# opted-in leading/direct-PR: slot=2a56a1c7c29836800f09867c77186a5db981b1e7 review base=origin/main
+# opted-in leading/local-only: slot=3b6e5831fc7e88a5785afefa1fdca790980d4d27 review base=main
+# opted-in leading/scout: slot=ef38c774acdc2e299174d1220512f9eb7f800fad review base=main
+# opted-in diverged/no-mistakes: slot=2f842fbe0e0cb9360b1983fe2c20c2c182428962 review base=origin/main
+# opted-in diverged/direct-PR: slot=1c03cebfd112f711884cdfcabf64aa6db069ea79 review base=origin/main
+# opted-in diverged/local-only: slot=5636f311efba214ba46217567c4a945d63956af9 review base=origin/main
+# opted-in diverged/scout: slot=4864eeeb3db6967ed756e04ed6ecbdd74f33063e review base=origin/main
+# opted-in trailing/no-mistakes: slot=18782f40285e667b54e87f46dc1ebe28db95e5e2 review base=origin/main
+# opted-in trailing/direct-PR: slot=e853a1ec830e5a433fd8725d6fb85897433932ef review base=origin/main
+# opted-in trailing/local-only: slot=0440fd371ba7ece558837a8cc634ec36498ec9bb review base=origin/main
+# opted-in trailing/scout: slot=9b8d5a0740816f9900d66e801f8e75fa04051cd8 review base=origin/main
+ok - with the opt-in only a local-only ship or a scout leaves origin's tip, for a primary that strictly contains it, and the review starts where the slot did
+ok - with the opt-in a named base branch still starts from origin's copy
+ok - with the opt-in an unclean slot is still refused, untouched, before any base is chosen
+# all fm-spawn-pool-base-freshen tests passed

@@ -1,0 +1,20 @@
+ok - fm-telegram: missing required configuration fails cleanly
+ok - fm-telegram: listen stays quiet on success, backs off on failure, exits after max failures
+ok - fm-telegram: environment values override the .env file
+ok - fm-telegram: status succeeds without network and prints configuration
+ok - fm-telegram: poll filters by chat id, stashes, wakes, and advances offset
+ok - fm-telegram: poll counts dropped updates and advances offset
+ok - fm-telegram: poll surfaces each accepted update exactly once
+ok - fm-telegram: send splits long text at line boundaries
+ok - fm-telegram: send renders formatting as explicit Telegram entities
+ok - fm-telegram: plain chunks stay bounded
+ok - fm-telegram: send never posts blank chunks
+ok - fm-telegram: send reports delivered
+ok - fm-telegram: send reports not-delivered
+ok - fm-telegram: send reports ambiguous on timeout
+ok - fm-telegram: --help prints usage for every subcommand
+ok - fm-telegram: unknown subcommand prints usage and exits non-zero
+ok - fm-telegram: status never prints the bot token
+ok - fm-telegram: background responder handles a safe message promptly and idempotently
+ok - fm-telegram: background responder refuses terminal-only authority
+ok - fm-telegram: stashed record carries the fields the acknowledgement contract needs

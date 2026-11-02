@@ -1,0 +1,8 @@
+$ git merge-base --is-ancestor 89aeaf46d4620b3493faa1e98ec060acc43b6406 HEAD
+fork base retained: yes
+$ git merge-base --is-ancestor a4bf5f867bae63e0a44b72ab4a8a7c83c0dea2f8 HEAD
+upstream tip integrated: yes
+$ git merge --no-edit a4bf5f867bae63e0a44b72ab4a8a7c83c0dea2f8
+Already up to date.
+$ git status --short
+working tree clean: yes

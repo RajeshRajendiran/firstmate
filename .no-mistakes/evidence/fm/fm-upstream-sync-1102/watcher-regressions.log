@@ -1,0 +1,5 @@
+ok - disposable watcher refuses inherited state outside its marked lab
+ok - simultaneous watcher starts leave exactly one live process
+watcher: FAILED - startup lock /tmp/fm-watcher-lock-tests.n6W2TF/arm-startup-lock-held/state/.wake-queue.lock held by live pid 2017550
+ok - arm relays a live-holder startup-lock refusal and keeps the downtime drainable
+ok - a stop forced before the safe point waits for it and leaves no lock evidence

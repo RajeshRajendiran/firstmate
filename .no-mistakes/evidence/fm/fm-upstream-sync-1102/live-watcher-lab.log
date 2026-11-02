@@ -1,0 +1,13 @@
+lab=/tmp/fm-lab.Sdlxxm
+$ FM_HOME=<lab> bin/fm-watch-arm.sh
+watcher: started pid=2181825 (beacon fresh)
+first watcher lock pid=2181825
+duplicate watcher exit=0
+watcher: already running pid 2181825
+first cycle cleanup: singleton lock removed
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 0 --recovery-generation 2181825.1793647514.cGHA2P
+$ FM_HOME=<same lab> bin/fm-watch-arm.sh (restart after acknowledged cleanup)
+watcher: started pid=2183393 (beacon fresh)
+replacement watcher lock pid=2183393
+replacement cycle cleanup: singleton lock removed
+live watcher lab result: pass
