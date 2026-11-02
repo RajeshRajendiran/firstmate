@@ -193,15 +193,20 @@ consume_actor_rows_locked() { # <rows-file> <cutoff>
 
 # A branch-actor drain or ack requires a snapshot to already exist and name at
 # least one row. The extension always writes a non-empty snapshot before it
-# ever prompts the branch (an empty eligible set means no prompt at all), so a
-# missing or empty file here means this ran outside that handoff - a wiring
-# bug, never "nothing eligible" - and must fail loudly rather than silently
-# draining or acking nothing.
+# ever prompts the branch (an empty eligible set means no prompt at all), and
+# the branch's own ack removes the snapshot once it consumes every granted row.
+# So a missing file with a live owner means this turn's grant was already
+# consumed, and otherwise this ran outside that handoff - a wiring bug. Either
+# way this must fail loudly rather than silently draining or acking nothing.
 require_branch_eligible_rows() {
-  rows_file_valid "$ELIGIBLE_ROWS_FILE" || {
+  rows_file_valid "$ELIGIBLE_ROWS_FILE" && return 0
+  if [ ! -e "$ELIGIBLE_ROWS_FILE" ] && [ ! -L "$ELIGIBLE_ROWS_FILE" ] \
+    && fm_wake_branch_owner_matches "$ELIGIBLE_OWNER_FILE"; then
+    echo "wake drain: this branch's grant was already consumed by its acknowledgement; nothing is left to drain or acknowledge, so do not acknowledge again" >&2
+  else
     echo "wake drain: no branch-eligible row snapshot at $ELIGIBLE_ROWS_FILE; refusing to guess what this actor may consume" >&2
-    return 1
-  }
+  fi
+  return 1
 }
 
 # The highest sequence this actor has already been presented: the branch's
@@ -211,7 +216,7 @@ require_branch_eligible_rows() {
 # unseen. 0 when nothing is on record.
 presented_max_row() { # <rows-file>
   if rows_file_valid "$1" 2>/dev/null; then
-    awk '$1 ~ /^[0-9]+$/ && $1 > max { max=$1 } END { print max + 0 }' "$1"
+    awk '$1 ~ /^[0-9]+$/ && $1 > max { max=$1 } END { print (max == "" ? 0 : max) }' "$1"
   else
     printf '0\n'
   fi
@@ -914,6 +919,14 @@ if [ -n "$ACK_THROUGH" ]; then
       exit 1
     }
   fi
+  HANDOFF_ACK=
+  if [ "$ACTOR" = main ] && [ -f "$STATE/.supervision-handoff-pending" ]; then
+    HANDOFF_TOKEN=$(cat "$STATE/.supervision-handoff-pending") || exit 1
+    if awk -F '\t' -v key="supervision-handoff:$HANDOFF_TOKEN" '$3 == "check" && $4 == key { found=1 } END { exit !found }' "$FM_WAKE_QUEUE" \
+      && ! awk -F '\t' -v key="supervision-handoff:$HANDOFF_TOKEN" '$3 == "check" && $4 == key { found=1 } END { exit !found }' "$DRAIN_TMP"; then
+      HANDOFF_ACK=$HANDOFF_TOKEN
+    fi
+  fi
   ACK_REMOVED=$(( $(awk 'END { print NR }' "$FM_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
   if [ ! -s "$DRAIN_TMP" ]; then
     fm_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
@@ -938,6 +951,9 @@ if [ -n "$ACK_THROUGH" ]; then
     exit 1
   fi
   DRAIN_TMP=
+  if [ -n "$HANDOFF_ACK" ] && [ "$(cat "$STATE/.supervision-handoff-pending" 2>/dev/null)" = "$HANDOFF_ACK" ]; then
+    rm -f "$STATE/.supervision-handoff-pending" || exit 1
+  fi
   if [ "$ACTOR" = branch ]; then
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
@@ -1052,7 +1068,7 @@ awk -F '\t' -v seqs="$ACTOR_ROWS_FILE" '
 RAW_ROWS=$(fm_wake_print_deduped "$DRAIN_VIEW_TMP") || exit "$?"
 rm -f -- "$DRAIN_VIEW_TMP" || exit 1
 DRAIN_VIEW_TMP=
-ACK_THROUGH=$(printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print max + 0 }') || exit 1
+ACK_THROUGH=$(printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$2 ~ /^[0-9]+$/ && $2 > max { max=$2 } END { print (max == "" ? 0 : max) }') || exit 1
 case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
   0) ;;
   ''|*[!0-9]*) ;;

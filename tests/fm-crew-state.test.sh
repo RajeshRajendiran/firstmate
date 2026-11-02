@@ -98,7 +98,15 @@ case "${1:-}" in
       status)
         shift
         if [ "${1:-}" = --run ]; then
-          printf '%s\n' "${FM_FAKE_AXI_STATUS_RUN:-}"
+          run_id=${2:-}
+          run_output="${FM_FAKE_AXI_STATUS_RUN:-}"
+          if [ -n "$run_id" ]; then
+            run_var="FM_FAKE_AXI_STATUS_RUN_$run_id"
+            if [ -n "${!run_var+x}" ]; then
+              run_output=${!run_var}
+            fi
+          fi
+          printf '%s\n' "$run_output"
           exit "${FM_FAKE_AXI_STATUS_RUN_ERROR:-0}"
         else
           printf '%s\n' "${FM_FAKE_AXI_STATUS:-}"
@@ -383,11 +391,13 @@ reset_fakes() {
   FM_FAKE_GERRIT_READ_FAIL=0
   FM_FAKE_GERRIT_READ_LOG=
   unset FM_FAKE_PR_47_STATE FM_FAKE_PR_47_MERGED FM_FAKE_PR_48_STATE FM_FAKE_PR_48_MERGED
+  unset FM_FAKE_AXI_STATUS_RUN_01OLD FM_FAKE_AXI_STATUS_RUN_01NEW
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_BUSY_TEXT FM_FAKE_TMUX_MISSING FM_FAKE_TMUX_WINDOW_GONE FM_FAKE_TMUX_UNREADABLE
   export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_READ_FAIL FM_FAKE_HERDR_HUSK FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_HERDR_PROCESS FM_FAKE_HERDR_SHELL_PID FM_FAKE_CI_LOGS
   export FM_FAKE_DAEMON_DOWN FM_FAKE_DAEMON_TIMEOUT FM_FAKE_DAEMON_PROBE_LOG FM_FAKE_AXI_HOME
   export FM_FAKE_DAEMON_OUTPUT
   export FM_FAKE_AXI_HOME_ERROR FM_FAKE_AXI_STATUS_RUN_ERROR FM_FAKE_AXI_STATUS_ERROR
+  export FM_FAKE_AXI_STATUS_RUN_01OLD FM_FAKE_AXI_STATUS_RUN_01NEW
   export FM_FAKE_PR_STATE FM_FAKE_PR_MERGED FM_FAKE_PR_READ_FAIL FM_FAKE_PR_READ_LOG FM_FAKE_PR_STATE_AXI
   export FM_FAKE_GLAB_STATE FM_FAKE_GLAB_READ_FAIL FM_FAKE_GLAB_READ_LOG
   export FM_FAKE_TEA_STATE FM_FAKE_TEA_MERGED FM_FAKE_TEA_READ_FAIL FM_FAKE_TEA_READ_LOG
@@ -1240,7 +1250,7 @@ test_top_level_ci_checks_green_surfaces_done() {
   pass "top-level ci status uses ci log green marker"
 }
 
-test_ci_monitoring_no_checks_terminal_surfaces_done() {
+test_ci_monitoring_no_checks_stays_working() {
   reset_fakes
   local d; d=$(new_case ci-nochecks)
   make_repo_on_branch "$d/wt" fm/feat-cinochecks
@@ -1249,9 +1259,27 @@ test_ci_monitoring_no_checks_terminal_surfaces_done() {
   FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinochecks)"
   FM_FAKE_CI_LOGS="no CI checks reported - still monitoring until merged or closed"
   local out; out=$(run_crew_state "$d" feat-cinochecks)
-  assert_contains "$out" "state: done" "terminal no-checks ci-monitor run -> done"
-  assert_contains "$out" "checks green" "terminal no-checks ci-monitor detail mentions checks green"
-  pass "terminal no-checks ci-monitor marker surfaces done"
+  assert_contains "$out" "state: working" "a PR with no CI checks -> working"
+  assert_not_contains "$out" "checks green" "a PR with no CI checks is not checks green"
+  assert_contains "$out" "no CI checks" "the detail names the real condition"
+  pass "a PR with no CI checks reported is not read as checks green"
+}
+
+# The crew's own "done: ... checks green" report must not be promoted by the
+# status-log override when the ci log says no check ever reported.
+test_ci_no_checks_status_log_override_stays_working() {
+  reset_fakes
+  local d; d=$(new_case ci-nochecks-status-log)
+  make_repo_on_branch "$d/wt" fm/feat-cinocheckssl
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cinocheckssl.meta" "window=fm:fm-feat-cinocheckssl" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/feat-cinocheckssl.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinocheckssl)"
+  FM_FAKE_CI_LOGS="no CI checks reported - still monitoring until merged or closed"
+  local out; out=$(run_crew_state "$d" feat-cinocheckssl)
+  assert_contains "$out" "state: working" "crew-reported green with no CI checks -> working"
+  assert_not_contains "$out" "source: status-log" "no-checks must not reach the status-log override"
+  pass "status-log override refuses a PR with no CI checks"
 }
 
 # The monitor logs a checks state only when it changes, and a base-branch
@@ -1305,6 +1333,55 @@ test_ci_monitoring_green_before_log_tail_stays_green() {
   assert_contains "$out" "https://github.com/o/r/pull/2" "the full-log reading names the run's PR"
   assert_not_contains "$out" "state: working" "a truncated ci log must not hide a green PR"
   pass "a green marker before the ci log tail still surfaces done"
+}
+
+NO_CI_SENTENCE="repository declares no CI (no_ci: true) - treating as all checks passed - still monitoring until merged or closed"
+
+test_ci_monitoring_no_ci_declared_stays_working() {
+  reset_fakes
+  local d; d=$(new_case ci-noci)
+  make_repo_on_branch "$d/wt" fm/feat-cinoci
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cinoci.meta" "window=fm:fm-feat-cinoci" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinoci)"
+  FM_FAKE_CI_LOGS="$NO_CI_SENTENCE"
+  local out; out=$(run_crew_state "$d" feat-cinoci)
+  assert_contains "$out" "state: working" "a no_ci repository -> working"
+  assert_contains "$out" "repository declares no CI" "the detail names the no_ci condition"
+  assert_not_contains "$out" "validating (running)" "a parked no_ci run is not validating"
+  assert_not_contains "$out" "checks green" "a no_ci repository is not checks green"
+  pass "a no_ci ci-monitor marker reads as unverified, not validating"
+}
+
+test_ci_no_ci_status_log_override_stays_working() {
+  reset_fakes
+  local d; d=$(new_case ci-noci-status-log)
+  make_repo_on_branch "$d/wt" fm/feat-cinocisl
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cinocisl.meta" "window=fm:fm-feat-cinocisl" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/feat-cinocisl.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinocisl)"
+  FM_FAKE_CI_LOGS="$NO_CI_SENTENCE"
+  local out; out=$(run_crew_state "$d" feat-cinocisl)
+  assert_contains "$out" "state: working" "crew-reported green on a no_ci repository -> working"
+  assert_not_contains "$out" "source: status-log" "no_ci must not reach the status-log override"
+  pass "status-log override refuses a no_ci repository"
+}
+
+test_ci_no_ci_then_red_marker_is_not_ready() {
+  reset_fakes
+  local d; d=$(new_case ci-noci-red)
+  make_repo_on_branch "$d/wt" fm/feat-cinocired
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-cinocired.meta" "window=fm:fm-feat-cinocired" "worktree=$d/wt" "kind=ship"
+  printf 'done: PR https://github.com/o/r/pull/2 checks green\n' > "$d/state/feat-cinocired.status"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-cinocired)"
+  FM_FAKE_CI_LOGS=$(printf '%s\nCI checks failed: build\n' "$NO_CI_SENTENCE")
+  local out; out=$(run_crew_state "$d" feat-cinocired)
+  assert_contains "$out" "state: working" "a red marker after the no_ci sentence -> working"
+  assert_not_contains "$out" "state: done" "a red marker after the no_ci sentence is not done"
+  assert_not_contains "$out" "repository declares no CI" "the last marker wins over the no_ci sentence"
+  pass "a red marker after the no_ci sentence reads not ready"
 }
 
 test_ci_monitoring_no_checks_yet_stays_working() {
@@ -5586,6 +5663,241 @@ test_competing_live_runs_report_unknown_with_both_ids() {
   pass 'competing live runs report unknown with both run ids'
 }
 
+# Overview order A (historical-first / reversed): AXI can surface a historical
+# row before the active current run when an old run was updated by its stale PR
+# being closed. The current branch status identifies the active run, so
+# crew-state must not trust the overview's row order and report the stale PR
+# state, even when both ledger rows share a minute-level timestamp.
+test_current_active_run_beats_stale_overview_row() {
+  reset_fakes
+  local d old_head new_head out
+  d=$(new_case stale-overview-row)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  old_head=$(git -C "$d/wt" rev-parse HEAD)
+  new_head=$(make_rebased_head "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"01OLD\",fm/reused-branch,completed,$old_head,\"https://github.com/o/r/pull/1\"
+  \"01NEW\",fm/reused-branch,running,$new_head,\"\""
+  FM_FAKE_RUN_HEAD=$new_head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed 's/01RUN/01NEW/')
+branch_sync:
+  state: pipeline_owned"
+  FM_FAKE_AXI_STATUS_RUN_01OLD="$(FM_FAKE_RUN_HEAD=$old_head run_passed fm/reused-branch | sed 's/01RUN/01OLD/')"
+  FM_FAKE_AXI_STATUS_RUN_01NEW="$FM_FAKE_AXI_STATUS"
+  FM_FAKE_RUNS_LIST="  running fm/reused-branch ${new_head:0:7} 2026-09-28 12:00
+  completed fm/reused-branch ${old_head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: working' 'the active current run remains authoritative'
+  assert_contains "$out" '01NEW' 'the active run identity is reported'
+  assert_not_contains "$out" 'PR closed' 'a stale closed PR is not reported for the active run'
+  unset FM_FAKE_AXI_STATUS_RUN_01OLD FM_FAKE_AXI_STATUS_RUN_01NEW
+  pass 'active current run beats a stale overview row'
+}
+
+# Same historical-first overview shape as above, but the stale row is failed
+# rather than completed. failed is a terminal overview status and must yield to
+# a newer live bare status the same way completed does.
+test_current_active_run_beats_stale_failed_overview_row() {
+  reset_fakes
+  local d old_head new_head out
+  d=$(new_case stale-failed-overview-row)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  old_head=$(git -C "$d/wt" rev-parse HEAD)
+  new_head=$(make_rebased_head "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"01OLD\",fm/reused-branch,failed,$old_head,\"\"
+  \"01NEW\",fm/reused-branch,running,$new_head,\"\""
+  FM_FAKE_RUN_HEAD=$new_head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed 's/01RUN/01NEW/')
+branch_sync:
+  state: pipeline_owned"
+  FM_FAKE_AXI_STATUS_RUN_01OLD="$(FM_FAKE_RUN_HEAD=$old_head run_failed fm/reused-branch | sed 's/01RUN/01OLD/')"
+  FM_FAKE_AXI_STATUS_RUN_01NEW="$FM_FAKE_AXI_STATUS"
+  FM_FAKE_RUNS_LIST="  running fm/reused-branch ${new_head:0:7} 2026-09-28 12:00
+  failed fm/reused-branch ${old_head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: working' 'the active current run remains authoritative'
+  assert_contains "$out" '01NEW' 'the active run identity is reported'
+  assert_not_contains "$out" 'state: failed' 'a stale failed overview row is not attributed'
+  unset FM_FAKE_AXI_STATUS_RUN_01OLD FM_FAKE_AXI_STATUS_RUN_01NEW
+  pass 'active current run beats a stale failed overview row'
+}
+
+test_current_active_run_beats_same_head_stale_failed_overview_row() {
+  reset_fakes
+  local d head out old_id new_id old_var new_var
+  old_id=01M00000000000000000000000
+  new_id=01M10000000000000000000000
+  old_var=FM_FAKE_AXI_STATUS_RUN_$old_id
+  new_var=FM_FAKE_AXI_STATUS_RUN_$new_id
+  d=$(new_case stale-same-head-failed-overview-row)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"$old_id\",fm/reused-branch,failed,$head,\"\"
+  \"$new_id\",fm/reused-branch,running,$head,\"\""
+  FM_FAKE_RUN_HEAD=$head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed "s/01RUN/$new_id/")
+branch_sync:
+  state: pipeline_owned"
+  printf -v "$old_var" '%s' "$(FM_FAKE_RUN_HEAD=$head run_failed fm/reused-branch | sed "s/01RUN/$old_id/")"
+  printf -v "$new_var" '%s' "$FM_FAKE_AXI_STATUS"
+  export "${old_var?}" "${new_var?}"
+  FM_FAKE_RUNS_LIST="  running fm/reused-branch ${head:0:7} 2026-09-28 12:00
+  failed fm/reused-branch ${head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: working' 'same-head active run remains authoritative'
+  assert_contains "$out" "$new_id" 'same-head active run identity is reported'
+  assert_not_contains "$out" 'state: failed' 'same-head stale failed row is not attributed'
+  unset "$old_var" "$new_var"
+  pass 'same-head active run beats a stale failed overview row'
+}
+
+test_same_head_run_with_unverifiable_timestamp_reports_unknown() {
+  reset_fakes
+  local d head out old_id new_id old_var new_var
+  old_id=01M00000000000000000000001
+  new_id=01M00000000000000000000000
+  old_var=FM_FAKE_AXI_STATUS_RUN_$old_id
+  new_var=FM_FAKE_AXI_STATUS_RUN_$new_id
+  d=$(new_case stale-same-head-unverifiable-overview-row)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"$old_id\",fm/reused-branch,failed,$head,\"\"
+  \"$new_id\",fm/reused-branch,running,$head,\"\""
+  FM_FAKE_RUN_HEAD=$head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed "s/01RUN/$new_id/")
+branch_sync:
+  state: pipeline_owned"
+  printf -v "$old_var" '%s' "$(FM_FAKE_RUN_HEAD=$head run_failed fm/reused-branch | sed "s/01RUN/$old_id/")"
+  printf -v "$new_var" '%s' "$FM_FAKE_AXI_STATUS"
+  export "${old_var?}" "${new_var?}"
+  FM_FAKE_RUNS_LIST="  running fm/reused-branch ${head:0:7} 2026-09-28 12:00
+  failed fm/reused-branch ${head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: unknown' 'same-head ordering within one ULID millisecond is unverified'
+  assert_contains "$out" "$old_id" 'unverified same-head ordering names the selected run'
+  assert_contains "$out" "$new_id" 'unverified same-head ordering names the reported run'
+  assert_not_contains "$out" 'state: failed' 'unverified same-head ordering never attributes stale failure'
+  unset "$old_var" "$new_var"
+  pass 'same-head run with an unverified ULID timestamp reports unknown'
+}
+
+# Overview order B (recorded newer-first): a bare AXI status can lag the
+# creation-ordered overview and name an older live run. That historical
+# identity must not hide the overview's newer completed result, including when
+# both ledger rows share a minute-level timestamp (row order is the tie-break).
+test_older_live_status_does_not_hide_newer_completed_run() {
+  reset_fakes
+  local d new_head old_head out
+  d=$(new_case older-live-status)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  new_head=$(git -C "$d/wt" rev-parse HEAD)
+  old_head=$(make_rebased_head "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"01NEW\",fm/reused-branch,completed,$new_head,\"https://github.com/o/r/pull/2\"
+  \"01OLD\",fm/reused-branch,running,$old_head,\"\""
+  FM_FAKE_RUN_HEAD=$old_head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed 's/01RUN/01OLD/')"
+  FM_FAKE_AXI_STATUS_RUN_01OLD="$FM_FAKE_AXI_STATUS"
+  FM_FAKE_AXI_STATUS_RUN_01NEW="$(FM_FAKE_RUN_HEAD=$new_head run_passed fm/reused-branch | sed 's/01RUN/01NEW/')"
+  # Same-minute timestamps: ledger row order (newest-first) is the tie-break,
+  # matching recorded AXI overviews. The bare status naming the older live run
+  # must not hide the newer completed result.
+  FM_FAKE_RUNS_LIST="  completed fm/reused-branch ${new_head:0:7} 2026-09-28 12:00
+  running fm/reused-branch ${old_head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: done' 'the newer completed run remains authoritative'
+  assert_contains "$out" '01NEW' 'the newer run identity is reported'
+  assert_not_contains "$out" 'state: working' 'an older live status does not hide the completed result'
+  pass 'older live status does not hide a newer completed run'
+}
+
+test_failed_selected_detail_read_is_not_attributed() {
+  reset_fakes
+  local d new_head old_head out
+  d=$(new_case failed-selected-detail)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  new_head=$(git -C "$d/wt" rev-parse HEAD)
+  old_head=$(make_rebased_head "$d/wt")
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 2 of 2 total
+runs[2]{id,branch,status,head,pr}:
+  \"01NEW\",fm/reused-branch,completed,$new_head,\"https://github.com/o/r/pull/2\"
+  \"01OLD\",fm/reused-branch,running,$old_head,\"\""
+  FM_FAKE_RUN_HEAD=$old_head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed 's/01RUN/01OLD/')"
+  FM_FAKE_AXI_STATUS_RUN_01OLD="$FM_FAKE_AXI_STATUS"
+  FM_FAKE_AXI_STATUS_RUN_01NEW="$(FM_FAKE_RUN_HEAD=$new_head run_passed fm/reused-branch | sed 's/01RUN/01NEW/')"
+  FM_FAKE_AXI_STATUS_RUN_ERROR=1
+  FM_FAKE_RUNS_LIST="  completed fm/reused-branch ${new_head:0:7} 2026-09-28 12:00
+  running fm/reused-branch ${old_head:0:7} 2026-09-28 12:00"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'selected run unreadable' 'a failed selected-run read reports unknown'
+  assert_not_contains "$out" 'state: done' 'output from a failed selected-run read is not attributed'
+  pass 'failed selected-run detail read is not attributed'
+}
+
+# Overview lists a stale completed run A first, then a newer failed run C and
+# a live run B created between them. B is newer than A but not than C, so B
+# must not replace A and hide C's newer failure.
+test_live_run_newer_than_selection_does_not_hide_newer_failed_run() {
+  reset_fakes
+  local d head out a_id b_id c_id a_var b_var c_var
+  a_id=01M00000000000000000000000
+  b_id=01M10000000000000000000000
+  c_id=01M20000000000000000000000
+  a_var=FM_FAKE_AXI_STATUS_RUN_$a_id
+  b_var=FM_FAKE_AXI_STATUS_RUN_$b_id
+  c_var=FM_FAKE_AXI_STATUS_RUN_$c_id
+  d=$(new_case live-between-stale-and-newer-failed)
+  make_repo_on_branch "$d/wt" fm/reused-branch
+  head=$(git -C "$d/wt" rev-parse HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/reused.meta" "window=fm:fm-reused" "worktree=$d/wt" "kind=ship" "harness=claude"
+  printf 'working: validating the current run\n' > "$d/state/reused.status"
+  FM_FAKE_AXI_HOME="count: 3 of 3 total
+runs[3]{id,branch,status,head,pr}:
+  \"$a_id\",fm/reused-branch,completed,$head,\"\"
+  \"$c_id\",fm/reused-branch,failed,$head,\"\"
+  \"$b_id\",fm/reused-branch,running,$head,\"\""
+  FM_FAKE_RUN_HEAD=$head
+  FM_FAKE_AXI_STATUS="$(run_running fm/reused-branch | sed "s/01RUN/$b_id/")"
+  printf -v "$a_var" '%s' "$(FM_FAKE_RUN_HEAD=$head run_passed fm/reused-branch | sed "s/01RUN/$a_id/")"
+  printf -v "$b_var" '%s' "$FM_FAKE_AXI_STATUS"
+  printf -v "$c_var" '%s' "$(FM_FAKE_RUN_HEAD=$head run_failed fm/reused-branch | sed "s/01RUN/$c_id/")"
+  export "${a_var?}" "${b_var?}" "${c_var?}"
+  out=$(run_crew_state "$d" reused)
+  assert_contains "$out" 'state: unknown' 'a live run older than another candidate is not promoted'
+  assert_contains "$out" "$c_id" 'the newer failed run is named'
+  assert_not_contains "$out" 'state: working' 'the live run does not hide the newer failed run'
+  unset "$a_var" "$b_var" "$c_var"
+  pass 'live run newer than the selection does not hide a newer failed run'
+}
+
 test_newer_failed_run_is_not_hidden_by_older_live_run() {
   make_competing_runs_case newest-failed failed running
   local d=$TMP_ROOT/newest-failed out
@@ -5796,9 +6108,13 @@ test_gate_block_parked_not_superseded
 test_ci_ready_done_log_beats_monitoring_run
 test_ci_monitoring_checks_green_surfaces_done
 test_top_level_ci_checks_green_surfaces_done
-test_ci_monitoring_no_checks_terminal_surfaces_done
+test_ci_monitoring_no_checks_stays_working
+test_ci_no_checks_status_log_override_stays_working
 test_ci_monitoring_green_then_rearm_stays_green
 test_ci_monitoring_green_before_log_tail_stays_green
+test_ci_monitoring_no_ci_declared_stays_working
+test_ci_no_ci_status_log_override_stays_working
+test_ci_no_ci_then_red_marker_is_not_ready
 test_ci_monitoring_no_checks_yet_stays_working
 test_ci_monitoring_still_waiting_stays_working
 test_ci_monitoring_green_then_new_issue_stays_working
@@ -5953,6 +6269,13 @@ test_coarse_live_row_keeps_the_original_supersede_note
 test_coarse_live_rebased_row_is_not_attributed
 test_terminal_rebased_run_is_not_attributed
 test_competing_live_runs_report_unknown_with_both_ids
+test_current_active_run_beats_stale_overview_row
+test_current_active_run_beats_stale_failed_overview_row
+test_current_active_run_beats_same_head_stale_failed_overview_row
+test_same_head_run_with_unverifiable_timestamp_reports_unknown
+test_older_live_status_does_not_hide_newer_completed_run
+test_failed_selected_detail_read_is_not_attributed
+test_live_run_newer_than_selection_does_not_hide_newer_failed_run
 test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown

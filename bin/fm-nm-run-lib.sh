@@ -202,6 +202,31 @@ fm_nm_run_status_class() {  # <status_word>
   esac
 }
 
+# 0 when the status identity with $3 is newer than the same-branch candidate
+# run with $2; 2 means same-head ULIDs share a creation timestamp. The runs
+# ledger $6 is read only for different heads.
+fm_nm_run_is_newer_than() {  # <branch> <candidate-id> <reported-id> <candidate-head> <reported-head> <runs-list>
+  local branch=$1 selected_id=$2 reported_id=$3 selected_head=$4 reported_head=$5 runs=$6 first_match
+  if [ -n "$selected_head" ] && [ "${selected_head:0:7}" = "${reported_head:0:7}" ]; then
+    [[ "$selected_id" =~ ^[0-9A-HJKMNP-TV-Z]{26}$ && "$reported_id" =~ ^[0-9A-HJKMNP-TV-Z]{26}$ ]] || return 1
+    [ "${selected_id:0:10}" = "${reported_id:0:10}" ] && return 2
+    [[ "${reported_id:0:10}" > "${selected_id:0:10}" ]] && return 0
+    return 1
+  fi
+  [ -n "$selected_head" ] && [ -n "$reported_head" ] \
+    && [ "${selected_head:0:7}" != "${reported_head:0:7}" ] || return 1
+  first_match=$(printf '%s\n' "$runs" | awk -v branch="$branch" \
+    -v selected="${selected_head:0:7}" -v reported="${reported_head:0:7}" '
+    $2 == branch {
+      if (index($3, selected) == 1) { selected_count++; if (first == "") first = "selected" }
+      else if (index($3, reported) == 1) { reported_count++; if (first == "") first = "reported" }
+    }
+    END {
+      if (selected_count == 1 && reported_count == 1) print first
+    }')
+  [ "$first_match" = reported ]
+}
+
 # Select from a complete `no-mistakes axi` overview with the existing awk
 # toolchain. A capped overview requires an optional Python 3 sqlite3 reader
 # for a read-only same-branch query of the state database fm_nm_state_db
@@ -581,4 +606,78 @@ fm_nm_runs_status_for_worktree() {  # <worktree> <branch> <runs-list-output> [ex
   done <<< "$list"
   printf '%s' "$decided"
   return 0
+}
+
+# Values of column $3 in table $2 (for example `steps` or `active_steps`) of
+# captured `axi status` TOON $1, one line per row, quotes stripped. The column
+# is found by name in the table's own header, so column order is never
+# assumed; a quoted cell may hold commas. Prints nothing when the table or
+# column is absent.
+fm_nm_table_column() {  # <toon-output> <table> <column>
+  printf '%s\n' "$1" | awk -v table="$2" -v column="$3" '
+    function cells(line, out,    n, i, c, q, cur) {
+      n = 0; cur = ""; q = 0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "\"") { q = !q; continue }
+        if (c == "," && !q) { out[++n] = cur; cur = ""; continue }
+        cur = cur c
+      }
+      out[++n] = cur
+      return n
+    }
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    !inblock {
+      if (match($0, "^[ \t]*" table "\\[[0-9]+\\]\\{[^}]*\\}:")) {
+        hdr = index($0, table)
+        cols = substr($0, index($0, "{") + 1)
+        cols = substr(cols, 1, index(cols, "}") - 1)
+        ncol = split(cols, names, ",")
+        want = 0
+        for (i = 1; i <= ncol; i++) if (trim(names[i]) == column) want = i
+        if (!want) exit
+        inblock = 1
+      }
+      next
+    }
+    {
+      if ($0 ~ /^[ \t]*$/) exit
+      match($0, /[^ \t]/)
+      if (RSTART <= hdr) exit
+      n = cells(trim($0), row)
+      print (want <= n ? trim(row[want]) : "")
+    }
+  '
+}
+
+# Validation progress of the run in captured `axi status` TOON $1, as
+# "<percent>\t<position>\t<total>\t<step>\t<round>": <total> is the number of
+# rows in the run's steps[] table, completed and skipped steps count as done,
+# <percent> is done*100/total, <step> is the active step (from active_steps[],
+# else the first step not yet done) at 1-based <position>, and <round> is the
+# active step's round, such as `auto-fix 1/3`. Fails when the run has no steps
+# table. Display only: it does not decide which run is the task's.
+fm_nm_run_progress() {  # <toon-output>
+  local names=() statuses=() total done=0 position=0 step='' round='' active i
+  while IFS= read -r i; do names+=("$i"); done < <(fm_nm_table_column "$1" steps step)
+  while IFS= read -r i; do statuses+=("$i"); done < <(fm_nm_table_column "$1" steps status)
+  total=${#names[@]}
+  [ "$total" -gt 0 ] || return 1
+  for ((i = 0; i < total; i++)); do
+    case "${statuses[i]:-}" in
+      completed | skipped) done=$((done + 1)) ;;
+      *) [ -n "$step" ] || { step=${names[i]}; position=$((i + 1)); } ;;
+    esac
+  done
+  active=$(fm_nm_table_column "$1" active_steps step | head -1)
+  if [ -n "$active" ]; then
+    for ((i = 0; i < total; i++)); do
+      [ "${names[i]}" = "$active" ] || continue
+      step=$active
+      position=$((i + 1))
+      round=$(fm_nm_table_column "$1" active_steps round | head -1)
+      break
+    done
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$((done * 100 / total))" "$position" "$total" "$step" "$round"
 }

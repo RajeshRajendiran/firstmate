@@ -111,7 +111,9 @@
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a check of the full ci-step log overrides working -> done once checks read
-#      green, so a green PR is never silently read as still-validating. And a
+#      green, so a green PR is never silently read as still-validating. A ci log
+#      whose last marker reports no CI checks reads working (no-checks), and the
+#      crew's own checks-green report is not promoted over it. And a
 #      terminal failed or cancelled run whose only unfinished step is the ci
 #      monitor, after every substantive step completed (an explicitly skipped
 #      rebase is allowed) and the ci log's last marker reads checks green,
@@ -346,6 +348,9 @@ pane_readable() {  # <target>
 # recognized interactive prompt would report `working` here while the
 # watcher's own poll (which always captures a tail) already classifies it
 # unknown - the exact split issue #1792 describes for a different cause.
+# A t3code crew's native busy AND idle are both accepted: the T3 server
+# reports its own session status and there is no shell in front of the agent
+# to misread.
 crew_busy_verdict() {  # <target>
   local tail40
   tail40=$(fm_backend_capture "$TASK_BACKEND" "$1" 40 "$EXPECTED_LABEL" 2>/dev/null) || tail40=''
@@ -369,14 +374,14 @@ nm_field() {  # <key>
   fm_nm_field "$RUN_OUT" "$1"
 }
 
-pr_read_record_bounded() {  # <owner> <repo> <number>
+pr_read_record_bounded() {  # <host> <owner> <repo> <number>
   local record state merged
   # shellcheck disable=SC2016  # The inner script expands after bash -c receives positional args.
   if ! record=$(fm_run_timed 5 bash -c '
     . "$1"
-    fm_pr_github_read_record "$2" "$3" "$4" || exit 1
+    fm_pr_github_read_record "$2" "$3" "$4" "$5" || exit 1
     printf "state=%s\nmerged=%s\n" "$FM_PR_RECORD_STATE" "$FM_PR_RECORD_MERGED"
-  ' _ "$SCRIPT_DIR/fm-pr-lib.sh" "$1" "$2" "$3" 2>/dev/null); then
+  ' _ "$SCRIPT_DIR/fm-pr-lib.sh" "$1" "$2" "$3" "$4" 2>/dev/null); then
     return 1
   fi
   state=$(printf '%s\n' "$record" | sed -n 's/^state=//p' | head -1)
@@ -478,7 +483,7 @@ passed_pr_detail() {
     github)
       owner=${path%%/*}
       repo=${path#*/}
-      if ! pr_read_record_bounded "$owner" "$repo" "$number"; then
+      if ! pr_read_record_bounded "$host" "$owner" "$repo" "$number"; then
         printf 'run passed: PR state unknown (unreadable)'
         return
       fi
@@ -904,7 +909,13 @@ nm_effective_ci_step_status() {
 # monitoring until merged or closed" or "no CI checks reported - still
 # monitoring until merged or closed" (verified against 360+ real run logs under
 # ~/.no-mistakes/logs/*/ci.log on the installed v1.32.2 binary, including the
-# actual PR #252 run). Reads the ci step's log via `axi logs --full` and scans
+# actual PR #252 run), or, for a repository whose config declares no_ci: true,
+# "repository declares no CI (no_ci: true) - treating as all checks passed -
+# still monitoring until merged or closed" (pinned from no-mistakes v1.84.0).
+# That no_ci sentence reads as no-checks, like the zero-checks marker: no check
+# ever verified the PR, so it stays working and never promotes a worker's own
+# "checks green" claim, even though its text says "all checks passed". Reads
+# the ci step's log via `axi logs --full` and scans
 # it for the MOST RECENT recognized marker (the log is append-only/chronological,
 # so the last match is current): green with nothing red after it means CI is
 # green right now, still only waiting on merge/close.
@@ -921,10 +932,12 @@ nm_ci_checks_state() {
   ci_log=$(nm_run axi logs --step ci --run "$run_id" --full) || true
   [ -n "$ci_log" ] || { printf 'unknown'; return; }
   marker=$(printf '%s\n' "$ci_log" \
-    | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running' \
+    | grep -E 'CI checks passed|repository declares no CI \(no_ci: true\)|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running' \
     | tail -1)
   case "$marker" in
-    *"checks passed"*|*"no CI checks reported - still monitoring"*) printf 'green' ;;
+    *"repository declares no CI (no_ci: true)"*) printf 'no-checks' ;;
+    *"checks passed"*) printf 'green' ;;
+    *"no CI checks reported - still monitoring"*) printf 'no-checks' ;;
     *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*) printf 'not-ready' ;;
     *) printf 'unknown' ;;
   esac
@@ -1014,8 +1027,62 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
         ;;
       selected\|*)
         IFS='|' read -r _ selected_id selected_status candidate_ids <<< "$run_choice"
-        RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status --run "$selected_id") \
-          || emit unknown run-step "selected run unreadable; run ids: $candidate_ids"
+        # A bare `axi status` identity can be an older live sibling while the
+        # overview's newest row is terminal.  It may replace a terminal row
+        # only when it is a same-branch candidate proven newer than every
+        # other candidate, by ULID timestamp (same head) or by the
+        # creation-ordered runs ledger (different heads).  A selection proven
+        # older than the live run, while another candidate is not, reports
+        # unknown rather than hiding that candidate.
+        reported_id=$(strip_quotes "$(nm_field id)")
+        reported_branch=$(strip_quotes "$(nm_field branch)")
+        selected_detail=
+        if [ -n "$reported_id" ] && [ "$reported_branch" = "$CREW_BRANCH" ] \
+          && [ "$reported_id" != "$selected_id" ] \
+          && { [ "$selected_status" = completed ] || [ "$selected_status" = cancelled ] || [ "$selected_status" = failed ]; } \
+          && fm_nm_run_is_active "$RUN_OUT"; then
+          case ",$candidate_ids," in
+            *,"$reported_id",*|*,\ "$reported_id",*)
+              reported_head=$(strip_quotes "$(fm_nm_field "$RUN_OUT" head)")
+              runs_ledger=
+              newer_than_all=1
+              newer_than_selected=0
+              IFS=', ' read -ra candidates <<< "$candidate_ids"
+              for candidate_id in "${candidates[@]}"; do
+                [ "$candidate_id" = "$reported_id" ] && continue
+                candidate_detail=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status --run "$candidate_id") || candidate_detail=
+                [ "$candidate_id" = "$selected_id" ] && selected_detail=$candidate_detail
+                if [ -n "$candidate_detail" ] && fm_nm_run_is_active "$candidate_detail"; then
+                  emit unknown run-step "competing live runs; run ids: $candidate_ids"
+                fi
+                candidate_head=$(strip_quotes "$(fm_nm_field "$candidate_detail" head)")
+                if [ -z "$runs_ledger" ] && [ -n "$candidate_head" ] && [ "${candidate_head:0:7}" != "${reported_head:0:7}" ]; then
+                  runs_ledger=$(nm_runs_list)
+                fi
+                if fm_nm_run_is_newer_than "$CREW_BRANCH" "$candidate_id" "$reported_id" "$candidate_head" "$reported_head" "$runs_ledger"; then
+                  [ "$candidate_id" = "$selected_id" ] && newer_than_selected=1
+                else
+                  precedence_status=$?
+                  [ "$precedence_status" = 2 ] && emit unknown run-step "same-head run ordering unverified; run ids: $candidate_ids"
+                  newer_than_all=0
+                fi
+              done
+              if [ "$newer_than_all" = 1 ]; then
+                selected_id=$reported_id
+                selected_status=running
+                selected_detail=
+              elif [ "$newer_than_selected" = 1 ]; then
+                emit unknown run-step "run ordering unverified; run ids: $candidate_ids"
+              fi
+              ;;
+          esac
+        fi
+        if [ -n "$selected_detail" ]; then
+          RUN_OUT=$selected_detail
+        else
+          RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status --run "$selected_id") \
+            || emit unknown run-step "selected run unreadable; run ids: $candidate_ids"
+        fi
         if [ "$(strip_quotes "$(nm_field id)")" != "$selected_id" ] \
           || [ "$(strip_quotes "$(nm_field branch)")" != "$CREW_BRANCH" ]; then
           emit unknown run-step "selected run unavailable or mismatched; run ids: $candidate_ids"
@@ -1208,6 +1275,8 @@ if [ "$HAVE_RUN" = 1 ]; then
               # the worker never reported it and no pr= was recorded.
               ci_pr_url=$(strip_quotes "$(nm_field pr)")
               [ -z "$ci_pr_url" ] || RUN_DETAIL="$RUN_DETAIL: $ci_pr_url"
+            elif [ "$CI_LOG_STATE" = no-checks ]; then
+              RUN_DETAIL="no CI checks reported (or repository declares no CI): nothing has verified the PR (still monitoring for merge/close)"
             fi
             ;;
           fixing)
@@ -1230,7 +1299,7 @@ if [ "$HAVE_RUN" = 1 ]; then
     elif [ "$CI_STEP_STATUS" = fixing ]; then
       CI_LOG_STATE=not-ready
     fi
-    if [ "$CI_LOG_STATE" != not-ready ]; then
+    if [ "$CI_LOG_STATE" != not-ready ] && [ "$CI_LOG_STATE" != no-checks ]; then
       emit_ship_status_done "run still monitoring PR"
     fi
   fi
@@ -1292,7 +1361,7 @@ fi
 # liveness, so a finished-but-pane-closed crew never reaches here. Down here there
 # is no run to consult, so only positive evidence that the target is gone may
 # read as death - a backend that failed to answer is unknown, never death, for
-# every classifier-backed backend (tmux, herdr, and rex) - and every death-class
+# the classifier-backed backends (tmux, herdr, rex, and t3code) - and every death-class
 # verdict reports unknown rather than trusting a possibly-stale status log as
 # the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
@@ -1322,22 +1391,24 @@ if ! pane_readable "$BACKEND_TARGET"; then
   #             normal flow below instead of being discarded.
   #   anything else - the cheap probes themselves failed to answer or
   #             contradicted themselves, which is unknown, never death.
-  # Backends with no classifier (orca, zellij, cmux, and paseo all report unverified)
+  # t3code answers from the server's own session status through the same
+  # contract. Backends with no classifier (orca, zellij, cmux, and paseo all
+  # report unverified, and tern's classifier is not promoted to recovery grade)
   # keep their historical capture-failure-means-gone reading.
   case "$TASK_BACKEND" in
-    tmux|herdr|rex) AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET") ;;
+    tmux|herdr|rex|t3code) AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET") ;;
     *) AGENT_STATE=none ;;
   esac
   case "$TASK_BACKEND:$AGENT_STATE" in
-    tmux:alive|herdr:alive|rex:alive)
+    tmux:alive|herdr:alive|rex:alive|t3code:alive)
       ;;
-    tmux:missing|herdr:missing|rex:missing)
+    tmux:missing|herdr:missing|rex:missing|t3code:missing)
       emit unknown none "backend target gone: $BACKEND_TARGET"
       ;;
-    tmux:dead|herdr:dead|rex:dead)
+    tmux:dead|herdr:dead|rex:dead|t3code:dead)
       emit unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains)"
       ;;
-    tmux:*|herdr:*|rex:*)
+    tmux:*|herdr:*|rex:*|t3code:*)
       emit unknown none "backend unreachable ($TASK_BACKEND endpoint state: $AGENT_STATE)"
       ;;
     *)
