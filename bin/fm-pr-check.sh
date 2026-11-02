@@ -4,11 +4,14 @@
 # Refuses when bin/fm-dod-lib.sh will not accept the named head as reachable
 # outside the worker's disposable copy; in no-mistakes mode a forge-reported
 # head is that named head and is already stored on the forge.
-# The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
-# live only in a private sidecar and are never interpolated into shell source.
+# The published check is a byte-for-byte copy of bin/fm-pr-poll.sh bound by its
+# own registration, so a later repository update does not invalidate it; task and
+# PR data live only in a private sidecar and are never interpolated into shell
+# source.
 # A GitHub pull request URL, a GitLab merge request URL, and a Gerrit change URL
 # are all accepted, including a merge request or change on a self-hosted
-# instance.
+# instance and a GitHub Enterprise pull request on a host this home names in
+# config/github-hosts.
 # A GitHub pull request the forge reports as a draft is refused, naming the draft
 # state and recording and arming nothing: a draft cannot be merged, so a poll armed on it
 # would wait for an event that cannot occur while nobody is asked to act.
@@ -51,6 +54,13 @@ PROVIDER=$FM_PR_PROVIDER
 HOST=$FM_PR_HOST
 PROJECT_PATH=$FM_PR_PATH
 NUMBER=$FM_PR_NUMBER
+# gh and gh-axi address github.com unless told otherwise, so a GitHub Enterprise
+# host is exported once here and every forge read this run makes, including the
+# bin/fm-dod-lib.sh children, addresses the host the recorded identity names.
+# A gitlab, gerrit, or forgejo run keeps its own per-call host handling.
+if [ "$PROVIDER" = github ]; then
+  fm_pr_github_host_export "$HOST"
+fi
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
