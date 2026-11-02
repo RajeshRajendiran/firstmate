@@ -426,14 +426,14 @@ A published numeric pid, live or dead, grants no extension to the original wait 
 
 ### Startup interruption window
 
-The watcher installs its EXIT cleanup trap immediately after claiming the singleton lock, before any recovery-marker or queue lock is touched, and publishes its home-bound lock identity (`fm-home`, `watcher-path`, `pid-identity`) right after.
-The claim also removes the predecessor's `state/.last-watcher-beat` before that identity exists, so a home-bound identity never pairs with an inherited beacon: health, and with it the arm's confirmation, requires the new watcher's own first poll.
+The watcher initializes its cleanup owner scope and installs its EXIT cleanup trap before attempting the singleton lock, so acquisition, an `already running` exit, and the post-claim identity window all run under cleanup.
+After claiming the singleton, it removes the predecessor's `state/.last-watcher-beat` and publishes its home-bound lock identity (`fm-home`, `watcher-path`, `pid-identity`).
+A home-bound identity therefore never pairs with an inherited beacon: health, and with it the arm's confirmation, requires the new watcher's own first poll.
 If the watcher cannot obtain a nonempty process identity or write any required identity record, it exits through that trap instead of entering an unconfirmable poll loop.
-Everything past that point - marker transitions, queue reads, delivery records - runs inside the trap's coverage.
 Cleanup joins any in-flight owner-directory creation or lock publication before releasing its own micro-locks and discarding its scoped unpublished staging directories; foreign staging and ownership are preserved.
 It then attempts the same bounded downtime publication an ordinary exit performs.
-The only window outside cleanup coverage is the singleton claim itself, so the arm never stops a child there.
-The arm treats that published identity as the startup safe point: it forwards a signal or its confirmation-deadline TERM only once the child's identity matches, waiting past the deadline if it must, and otherwise waits for the child to exit on its own; only a removed state directory, which leaves no lock to strand, skips the wait.
+Although cleanup covers the singleton claim, the arm never stops a child there.
+The arm treats the published identity as the startup safe point: it forwards a signal or its confirmation-deadline TERM only once the child's identity matches, waiting past the deadline if it must, and otherwise waits for the child to exit on its own; only a removed state directory, which leaves no lock to strand, skips the wait.
 An interrupted start leaves no self-owned singleton, steal mutex, micro-lock, or staging directory when downtime publication succeeds.
 The foreign marker-lock contention exception described above still retains singleton evidence deliberately.
 

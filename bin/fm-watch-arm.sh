@@ -52,12 +52,13 @@
 # cascade stale locks into the next arm. The child's own startup lock waits are
 # bounded by FM_WATCHER_STARTUP_LOCK_BOUND and fail with the typed line above.
 # Whenever the arm forwards a stop - a signal mid-start or the deadline itself -
-# it TERM's only at the startup safe point: the child's published lock identity,
-# which the child writes immediately after installing its EXIT cleanup trap, so
-# the stop runs through the same downtime publication and lock release as an
-# ordinary exit. A child still before that point when the deadline expires is
-# waited for, never killed mid-claim. A failed identity publication exits through
-# the child's trap instead of leaving a live child that cannot pass this gate.
+# it TERM's only at the startup safe point: the child's published lock identity.
+# The child arms EXIT cleanup before attempting the singleton and writes that
+# identity after the claim, so the stop runs through the same downtime
+# publication and lock release as an ordinary exit.
+# A child still before that point when the deadline expires is waited for, never
+# killed mid-claim. A failed identity publication exits through the child's trap
+# instead of leaving a live child that cannot pass this gate.
 # Once attached, a stale beacon alone does not end the followed cycle: while that
 # holder is alive and the lock still names it under the same identity, the arm
 # keeps following it, as a started arm waits out a slow child, until the lock
@@ -745,14 +746,13 @@ cleanup_child() {
   fi
 }
 
-# The watcher installs its EXIT cleanup trap immediately after claiming the
-# singleton and publishes its home-bound lock identity right after that. TERM
-# before that identity is complete can still land mid-claim - abandoning the
-# steal mutex or a startup lock - so a stop is forwarded only once the
-# identity matches the child (the startup safe point) or once the state
-# directory holding those locks is gone; otherwise this waits for the child to
-# exit on its own. No deadline overrides it; startup identity-publication
-# failure exits through the child's cleanup rather than stranding this wait.
+# The watcher installs its EXIT cleanup trap before attempting the singleton
+# and publishes its home-bound lock identity after claiming it. Although the
+# trap covers acquisition, a forwarded stop still waits for the identity to
+# match the child (the startup safe point), or for the state directory holding
+# those locks to disappear; otherwise this waits for the child to exit on its
+# own. No deadline overrides it; startup identity-publication failure exits
+# through the child's cleanup rather than stranding this wait.
 term_child_at_safe_point() {
   # The cheap gate reads only files the child itself writes after its trap
   # installs: the claimed pid plus all three identity records. The full
