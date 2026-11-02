@@ -3587,6 +3587,11 @@ watcher_cleanup() {
 }
 
 WATCHER_PID=${BASHPID:-$$}
+# Set before the trap. Cleanup's staged-owner sweep reads this name, and an
+# early stop or an "already running" exit runs that sweep before the post-claim
+# reassignment below. The later assignment replaces it once this process owns
+# the lock.
+FM_LOCK_OWNER_SCOPE="$WATCHER_PID.$RANDOM.$RANDOM"
 EVICTED_PID=
 EVICTED_BEAT_AGE=
 BEAT="$STATE/.last-watcher-beat"
