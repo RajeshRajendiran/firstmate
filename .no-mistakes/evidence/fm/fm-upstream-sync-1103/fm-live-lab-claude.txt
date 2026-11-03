@@ -1,0 +1,45 @@
+UP
+lab: /tmp/fmlab.KSBgmy (tear down with: bin/fm-live-lab.sh down /tmp/fmlab.KSBgmy)
+tree: df97103bfaf5613bdd0630b4cbe41833291265c9 from /home/agent/.no-mistakes/worktrees/37339719b87e/01M6H3TBM566X15HA5DZJ6AY5W
+primary: claude --setting-sources project,local --model sonnet --effort medium --permission-mode auto
+ok primary: claude pid 2911369 in /tmp/fmlab.KSBgmy/home
+ok probe: the primary answered LABREADY-7101e6a9b0cc
+ok trust: /tmp/fmlab.KSBgmy/home is trusted in the Claude store
+ok host: skipped (empty fleet arms no supervision)
+ok watcher: skipped (empty fleet)
+ok treehouse: ~/.treehouse unchanged
+ready: /tmp/fmlab.KSBgmy
+
+CHECK
+ok primary: claude pid 2911369 in /tmp/fmlab.KSBgmy/home
+ok probe: the primary answered LABREADY-7101e6a9b0cc
+ok trust: /tmp/fmlab.KSBgmy/home is trusted in the Claude store
+ok host: skipped (empty fleet arms no supervision)
+ok watcher: skipped (empty fleet)
+ok treehouse: ~/.treehouse unchanged
+
+PANE_TAIL
+ ▐▛███▛█   Claude Code v2.1.316
+▝▜██████▀  Sonnet 5.5 with medium effort · Claude Pro
+ ▝▝   ▝▝   /tmp/fmlab.KSBgmy/home
+  Updated to latest. Got 30 features, 247 bugfixes, and 118 other changes.
+  code.claude.com/docs/en/changelog for details
+❯ Lab readiness probe from bin/fm-live-lab.sh. Run no tool or command for this message. Reply with only the word LABREADY, a hyphen, and then 7101e6a9b0cc, with no spaces.                                                 
+● LABREADY-7101e6a9b0cc                                                                                                                                                                                                     
+✻ Baked for 7s · done 10:58 AM                                                                                                                                                                                              
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                                                                                                                                                                                                                         
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 2 agents                   
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Teach auto mode about your environment?
+  Auto mode works better when it knows your environment. Takes about a minute.
+  ❯ 1. Yes
+    2. Not now
+    3. Don't show again
+  Enter to confirm · Esc to cancel
+
+DOWN
+stopped: lab tmux server and lab processes
+removed: 1 Claude project entries under /tmp/fmlab.KSBgmy
+removed: /tmp/fmlab.KSBgmy

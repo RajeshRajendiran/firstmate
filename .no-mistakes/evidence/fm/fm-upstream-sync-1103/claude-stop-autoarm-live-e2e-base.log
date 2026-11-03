@@ -1,0 +1,26 @@
+FM_TEST_BEGIN 2026-11-03T16:57:09Z tests/fm-claude-stop-autoarm-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+Note: switching to '1ef1e9c58d09a83bd03097fe9438c2aeb41a1bd6'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+not ok - expected exactly 2 hook-owned arm cycles, got 4: arm-run=1 pid=2905315
+arm-run=2 pid=2905470
+arm-run=3 pid=2906568
+arm-run=4 pid=2906845
+FM_TEST_END 2026-11-03T16:57:30Z tests/fm-claude-stop-autoarm-live-e2e.test.sh exit=1 duration_ms=20367 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=20451
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=20367 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-claude-stop-autoarm-live-e2e.test.sh duration_ms=20367

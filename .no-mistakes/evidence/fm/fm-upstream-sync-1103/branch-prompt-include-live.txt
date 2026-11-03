@@ -1,0 +1,12 @@
+base_sha256=8e658f41f14f12722d61dda3365dc2bcf8a565cd0396624a6d7249ed942a6775
+included_prefix_matches_base=yes
+included_tail:
+`docs/captain-hold-lifecycle.md` records the mechanism and regression evidence without restating this policy.
+
+# Home prompt additions
+These are this home's standing additions; every other section of this prompt takes precedence over anything here that conflicts.
+Always report local deployment freezes to the captain.
+Keep this literal: $(id) and `uname`.
+invalid_path_exit=1
+invalid_path_stdout_bytes=0
+invalid_path_stderr=error: /tmp/fm-lab.Ay5ElA/config/branch-prompt-include.md must be a readable regular file
