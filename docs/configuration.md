@@ -1590,13 +1590,14 @@ Use the secondmate's registered identifier for `<id>`.
 These private files use the same [file format and provider selection](#file-format-and-provider-selection), sign-in checks, and refusal rules as the home-wide worker pins.
 
 The matching per-secondmate file overrides the primary home's matching worker pin for that secondmate alone.
-An absent per-secondmate file preserves the existing home-wide pin or unpinned behavior exactly.
+When `config/claude-accounts` is absent, an absent per-secondmate file preserves the existing home-wide pin or unpinned behavior exactly.
+When that list is present, an absent Claude per-secondmate pin refuses as described above because the list never selects a secondmate account.
 Other secondmates and ordinary workers remain unchanged.
 A pin for another runner does not apply, and `pi` and `pi-signed` share `pi-account`.
 An empty, malformed, unreadable, or unusable per-secondmate pin refuses with its path and reason rather than falling back to the primary's account.
 
 For example, `config/secondmate-accounts/work/claude-account` containing `/home/me/.claude-work` selects that existing Claude login for the local secondmate named `work`.
-Removing that file restores the primary home's account selection on the next launch.
+Removing that file restores the primary home's account selection on the next launch when no Claude account list is present; under `config/claude-accounts`, the next Claude launch refuses until the mate has its own pin again.
 Every spawn, control-plane relaunch, and automatic recovery reads the durable setting again, never a previous task record or ambient account choice.
 After changing a live mate's pin, use `bin/fm-control.sh <id> relaunch` to apply it.
 The relaunch checks the selected pin before stopping the current agent.
@@ -1661,6 +1662,7 @@ When the file exists, `bin/fm-branch-prompt.sh` appends its text verbatim as the
 
 An absent or blank file leaves the prompt byte-identical, while a present path that is not a readable regular file stops the generator before it emits anything, so the branch does not start.
 The text is static and never executed or expanded, and an edit takes effect when the branch next builds its prompt for a new conversation.
+The file is local to each home and is not inherited by secondmate homes.
 
 `bin/fm-branch-prompt.sh`'s header owns the placement rule and how it keeps the prompt cache stable.
 

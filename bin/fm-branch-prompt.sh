@@ -18,9 +18,10 @@
 # "helpful" dynamic content added here silently removes most of the cache
 # benefit - see the measured evidence cited in docs/pi-supervision-branch.md.
 #
-# The prompt therefore changes only when the firstmate version changes
-# (tracked file edits), which is exactly "generated once per firstmate
-# version". tests/fm-branch-supervision.test.sh holds this to byte-identical
+# The tracked portion therefore changes only when the firstmate version
+# changes. Each new branch conversation captures the complete prompt once;
+# the optional home include can change its final suffix between conversations.
+# tests/fm-branch-supervision.test.sh holds unchanged inputs to byte-identical
 # output across runs, environments, and fleet states.
 #
 # The one sanctioned home input is the optional local config/branch-prompt-
