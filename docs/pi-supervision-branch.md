@@ -509,7 +509,7 @@ That includes watcher-failure alarms, which are never offered to the branch.
 
 The captain accepted the normal provider prompt-caching strategy:
 
-- A byte-identical branch prefix generated once per firstmate version.
+- A byte-identical branch prefix for one Firstmate version while the optional [home prompt include](configuration.md#home-branch-prompt-include-configbranch-prompt-includemd) is unchanged.
 - The same tool set in the same order on every request.
 - One shared `prompt_cache_key` per home for all branch sessions.
   It is set in a `before_provider_request` hook, and only for providers whose requests already carry that field.
@@ -589,7 +589,7 @@ A leftover `state/.afk` flag declines nothing.
   `bin/fm-afk-return.sh` lists them under "waiting on you".
 - Main's standing authority relocates to the branch, and nothing more.
   [Authority relocation](#authority-relocation) below gives the details.
-- The branch prompt's fixed "Postures" section states these rules once per firstmate version, so the prefix stays byte-stable.
+- The branch prompt's fixed "Postures" section states these rules once per Firstmate version, so the prefix stays byte-stable while the optional home prompt include is unchanged.
   The per-wake tail is the only dynamic content.
 
 ### Authority relocation
