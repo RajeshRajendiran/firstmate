@@ -79,22 +79,26 @@
 #   makes a harness switch one ordinary relaunch. It refuses unless the
 #   recorded endpoint is positively agent-free on a backend with both a
 #   recovery-grade agent-state classifier and replacement-agent support
-#   (tmux or herdr), and clears the previous harness's per-task wiring
+#   (tmux, herdr, or rex), and clears the previous harness's per-task wiring
 #   before arming the new incarnation. T3 Code has the classifier but refuses
 #   relaunch because a thread keeps its conversation across turns and provider
 #   changes. Two verdicts are agent-free: a `dead`
 #   endpoint is ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
-#   merely unreachable from here - and it is only available on HERDR, which must
-#   still read the recorded pane as gone once that session's server is running
-#   again. A tmux `missing` always refuses: a task record carries no socket
+#   merely unreachable from here. Herdr proves absence by re-reading the pane
+#   through the recorded session after its server is running; Rex proves it from
+#   a structured not-found for the recorded block on the recorded server. A tmux
+#   `missing` always refuses: a task record carries no socket
 #   identity for its endpoint, so no read here can tell a destroyed window from
 #   one on a tmux server this process cannot address. An endpoint that turns out
 #   to have survived refuses too. The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
 #   (`--secondmate`, driven by the session-start liveness sweep).
+#   A ship or scout replacement refuses a recorded worktree that resolves to the
+#   active home, the code root, or any repository's primary checkout; the
+#   maintained transaction contract is in docs/agent-control.md.
 #   Every fresh ship/scout launch and replacement explicitly enters the recorded
 #   worktree immediately before trust setup and brief delivery, and a pre-launch
 #   cwd check refuses any endpoint that still reports another copy; a Herdr shell

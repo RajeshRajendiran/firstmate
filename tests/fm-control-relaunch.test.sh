@@ -15,8 +15,8 @@
 #   5. A launch failure after the agent is stopped keeps the prior record,
 #      reports the concrete state, and preserves the work.
 #   6. fm-spawn --relaunch refuses on its own: a live agent, a contradicting
-#      flag, an extra positional, or a backend that cannot prove the previous
-#      agent exited.
+#      flag, an extra positional, an unsafe recorded worktree, or a backend that
+#      cannot prove the previous agent exited.
 set -u
 
 # shellcheck source=tests/lib.sh
