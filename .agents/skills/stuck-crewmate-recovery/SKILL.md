@@ -42,7 +42,7 @@ When no authoritative run accounts for the task, inspect only its recorded backe
 Use `treehouse status` for treehouse-backed tmux, herdr, zellij, cmux, Paseo, Rex, t3code, tern, or hc tasks, and use the recorded `orca_worktree_id=` and `terminal=` for Orca tasks.
 Do not sweep another home's endpoints or infer ownership from a matching window label.
 
-Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.
+Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available as the isolated task worktree required by the [relaunch fail-closed boundaries](../../../docs/agent-control.md#fail-closed-boundaries).
 Preserve its uncommitted changes and commits, keep the same task identity, and resume or relaunch the recorded harness in that existing worktree with the same brief plus a concise progress note.
 A HERDR endpoint that is not merely idle but destroyed - a pane or workspace removed in Herdr churn - is recovered by that same relaunch, which creates one fresh endpoint in the existing worktree and rebinds the task's record to it; nothing special is needed, and the worktree is untouched ([`docs/agent-control.md`](../../../docs/agent-control.md) "Reclaiming a task whose endpoint is gone").
 That relaunch proves the endpoint is destroyed before it rebinds, so a Herdr server that was merely stopped is adopted back rather than duplicated.
