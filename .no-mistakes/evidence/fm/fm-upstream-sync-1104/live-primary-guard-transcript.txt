@@ -1,0 +1,36 @@
+Live worker relaunch primary-placement guard
+private_session=fmses private_socket_name=fm-lab
+worker_before=bash|/tmp/fm-lab.BkPeAm/task-wt
+
+[home] exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.BkPeAm
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e /home/agent/.no-mistakes/worktrees/37339719b87e/01M6JD3Z9CPFW28GBJHEHN1TBT/.pi/extensions/fm-primary-turnend-guard.ts -e /home/agent/.no-mistakes/worktrees/37339719b87e/01M6JD3Z9CPFW28GBJHEHN1TBT/.pi/extensions/fm-primary-pi-watch.ts if the extensions are not loaded.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+error: task liveguard's recorded worktree '/tmp/fm-lab.BkPeAm' is the primary home or checkout (/tmp/fm-lab.BkPeAm), not an isolated task worktree; refusing to relaunch a worker there
+
+[checkout] exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.BkPeAm
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: task liveguard's recorded worktree '/tmp/fm-lab.BkPeAm/project' is the primary home or checkout (its repository's primary checkout), not an isolated task worktree; refusing to relaunch a worker there
+
+[override] exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.BkPeAm
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WORKTREE TANGLE - PRIMARY CHECKOUT IS ON A FEATURE BRANCH
+●  /home/agent/.no-mistakes/worktrees/37339719b87e/01M6JD3Z9CPFW28GBJHEHN1TBT is on 'fm/live-valid', not its default branch 'main'.
+●  A crewmate likely branched/committed in the primary instead of its own worktree.
+●  The work is SAFE on the 'fm/live-valid' ref.
+●  Restore the primary to 'main':
+●      git -C /home/agent/.no-mistakes/worktrees/37339719b87e/01M6JD3Z9CPFW28GBJHEHN1TBT checkout main
+●  then re-validate 'fm/live-valid' in a proper isolated worktree.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+error: task liveguard's recorded worktree '/tmp/fm-lab.BkPeAm/project' is the primary home or checkout (its repository's primary checkout), not an isolated task worktree; refusing to relaunch a worker there
+
+worker_after=bash|/tmp/fm-lab.BkPeAm/task-wt
+task_window_count=1
