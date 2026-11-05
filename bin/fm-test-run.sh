@@ -305,7 +305,8 @@ family_for_basename() {
     fm-timeout-lib.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
-    fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-test-tap-verify.test.sh)
+    fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-test-tap-verify.test.sh|\
+    fm-test-linux.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
@@ -845,6 +846,7 @@ tests/fm-omp-primary-live-e2e.test.sh 74
 tests/fm-on.test.sh 11473
 tests/fm-opencode-primary-live-e2e.test.sh 47
 tests/fm-operational-input.test.sh 2404
+tests/fm-osc7501.test.sh 14000
 tests/fm-peek-remote.test.sh 1082
 tests/fm-pending-reply.test.sh 41090
 tests/fm-pi-branch-extension.test.sh 77218
@@ -934,6 +936,7 @@ tests/fm-teardown.test.sh 202132
 tests/fm-test-fixture-cleanup.test.sh 866
 tests/fm-test-fixtures.test.sh 1802
 tests/fm-test-isolation-proof.test.sh 2866
+tests/fm-test-linux.test.sh 1500
 tests/fm-test-tap-verify.test.sh 1000
 tests/fm-timeout-lib.test.sh 10750
 tests/fm-tmux-agent-liveness.test.sh 3770
@@ -1521,6 +1524,9 @@ families_for_changed_path() {
       ;;
     bin/fm-test-tap-verify.sh)
       printf '%s\n' "__script__:fm-test-tap-verify.test.sh"
+      ;;
+    bin/fm-test-linux.sh|tests/linux/Dockerfile)
+      printf '%s\n' "__script__:fm-test-linux.test.sh"
       ;;
     bin/backends/herdr*|bin/fm-herdr-lab.sh|tests/herdr-test-safety.sh|tests/herdr-client-pair-fixture.sh)
       printf '%s\n' real-herdr-gated
