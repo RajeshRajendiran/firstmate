@@ -113,15 +113,31 @@ case "$provider" in
     # marker never sees another byte.
     # shellcheck disable=SC2016  # The filter's $f and $r are jq variables, expanded by jq, not the shell.
     result=$(GH_HOST=$host gh pr view "$url" --json state,headRefOid,statusCheckRollup --jq '
+      def settled_at:
+        if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+        then . else null end;
       ([.statusCheckRollup[]?]
         | to_entries
         | map({item: .value,
-               key: (.value.name // .value.context // "check"),
-               when: (.value.completedAt // .value.startedAt // .value.createdAt // ""),
-               index: .key})
-        | sort_by(.key, .when, .index)
-        | group_by(.key)
-        | map(last.item)) as $latest
+               group: (if .value.__typename == "CheckRun"
+                            and (.value.name | type) == "string"
+                            and .value.name != ""
+                         then ["check", .value.name]
+                         else ["entry", .key]
+                         end),
+               at: (.value.startedAt | settled_at)})
+        | group_by(.group)
+        | map(if all(.[]; .at != null) then
+                ([.[].at] | max) as $newest
+                | ([.[] | select(.at == $newest)]) as $newest_entries
+                | if ($newest_entries | length) == 1
+                  then [$newest_entries[0].item]
+                  else ($newest_entries | map(.item))
+                  end
+              else
+                map(.item)
+              end)
+        | add // []) as $latest
       | ([$latest[]
             | select((.conclusion // "") as $r
                      | ($r != "" and $r != "SUCCESS" and $r != "NEUTRAL" and $r != "SKIPPED")

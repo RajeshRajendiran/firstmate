@@ -2203,13 +2203,24 @@ test_github_degraded_poll() {
   out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://ci.example/run/1"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"TIMED_OUT"}]' run_poll "$dir")
   [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE,lint:TIMED_OUT url=https://ci.example/run/1' ] \
     || fail "GitHub poll did not name every failing check and the first check's URL: $out"
-  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"CANCELLED","completedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2025-01-01T00:01:00Z"}]' \
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' \
     run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
   [ "$out" = 'healthy head=0123456789abcdef0123456789abcdef01234567' ] \
-    || fail "GitHub poll did not classify a check by its latest successful run: $out"
-  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"STALE","completedAt":"2025-01-01T00:01:00Z"}]' run_poll "$dir")
+    || fail "GitHub poll did not classify a check by its latest started run: $out"
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"STALE","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' run_poll "$dir")
   [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:STALE' ] \
-    || fail "GitHub poll ignored the latest stale run beside an obsolete success: $out"
+    || fail "GitHub poll ignored the latest-started stale run beside an obsolete success: $out"
+  for rollup in \
+    '[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]' \
+    '[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]'; do
+    out=$(FM_TEST_GH_ROLLUP="$rollup" run_poll "$dir")
+    [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE' ] \
+      || fail "GitHub poll discarded a failure with missing or tied start time: $out"
+  done
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"NEUTRAL","startedAt":"2025-01-01T00:10:00Z"}]' \
+    run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
+  [ "$out" = 'healthy head=0123456789abcdef0123456789abcdef01234567' ] \
+    || fail "GitHub poll retained an older failure behind tied green reruns: $out"
 
   # A merged, pending, skipped, or green rollup, a non-open pull request, an
   # unreadable head, and a gh failure all stay silent.
