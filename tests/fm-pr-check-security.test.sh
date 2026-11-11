@@ -2126,7 +2126,22 @@ test_degraded_watch_flag_in_an_overridden_home() {
     run_watcher_bounded "$home" "$dir/fakebin" > "$dir/watch-2.out" 2> "$dir/watch-2.err" || true
   [ "$(grep -c "degraded after ready: degraded head=$new_head" "$dir/watch-2.out")" -eq 1 ] \
     || fail "watcher's validated poll ignored the overridden home's flag: $(cat "$dir/watch-2.out") $(cat "$dir/watch-2.err")"
-  pass "a degraded-watch flag only in a home reached through FM_ROOT_OVERRIDE arms the baseline and wakes"
+  ack_watcher_cycle "$state" || fail "overridden-home degraded wake acknowledgement failed"
+  rm -f "$state/.last-check"
+  FM_TEST_WATCH_HOME_VIA_ROOT=1 FM_TEST_WATCH_SCRIPT="$code/bin/fm-watch.sh" \
+    FM_TEST_WATCH_STOP_WHEN="$state/.last-check" FM_TEST_GH_HEAD="$new_head" \
+    FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]' \
+    run_watcher_bounded "$home" "$dir/fakebin" > "$dir/watch-3.out" 2> "$dir/watch-3.err" || true
+  [ ! -e "$state/task-a.pr-poll-degraded" ] \
+    || fail "a healthy GitHub observation did not clear the degraded head marker"
+  ack_watcher_cycle "$state" || fail "overridden-home recovery cycle acknowledgement failed"
+  rm -f "$state/.last-check"
+  FM_TEST_WATCH_HOME_VIA_ROOT=1 FM_TEST_WATCH_SCRIPT="$code/bin/fm-watch.sh" \
+    FM_TEST_GH_HEAD="$new_head" FM_TEST_GH_ROLLUP="$failing" \
+    run_watcher_bounded "$home" "$dir/fakebin" > "$dir/watch-4.out" 2> "$dir/watch-4.err" || true
+  [ "$(grep -c "degraded after ready: degraded head=$new_head" "$dir/watch-4.out")" -eq 1 ] \
+    || fail "the same GitHub head did not wake after recovering and degrading again"
+  pass "an overridden-home degraded watch wakes again after same-head recovery"
 }
 
 test_github_degraded_poll() {
@@ -2228,6 +2243,24 @@ injected'; do
     || fail "watcher woke again for the same degraded transition"
   ack_watcher_cycle "$state" || fail "duplicate cycle acknowledgement failed"
 
+  # A successful observation clears the episode, so the same pipeline can
+  # degrade again and wake as a new transition.
+  rm -f "$state/.last-check"
+  set +e
+  rc=0
+  FM_TEST_WATCH_STOP_WHEN="$state/.last-check" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-recovered.out" 2> "$dir/watch-recovered.err" || rc=$?
+  set -e
+  [ "$rc" -eq 124 ] || fail "watcher ended before its bound on a recovered pipeline: rc=$rc"
+  [ ! -e "$state/task-a.pr-poll-degraded" ] || fail "a successful pipeline did not clear the degraded marker"
+  ack_watcher_cycle "$state" || fail "recovered pipeline cycle acknowledgement failed"
+  rm -f "$state/.last-check"
+  FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-repeat.out" 2> "$dir/watch-repeat.err"
+  [ "$(grep -c 'degraded after ready: degraded pipeline=941' "$dir/watch-repeat.out")" -eq 1 ] \
+    || fail "the same pipeline did not wake after recovering and failing again"
+  ack_watcher_cycle "$state" || fail "same-pipeline regression acknowledgement failed"
+
   # A new failing pipeline is a new transition and wakes again.
   rm -f "$state/.last-check"
   FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=942 \
@@ -2237,6 +2270,28 @@ injected'; do
   [ "$(grep -c 'degraded after ready: degraded pipeline=942' "$dir/watch-3.out")" -eq 1 ] \
     || fail "watcher did not wake again for a changed degraded pipeline"
   ack_watcher_cycle "$state" || fail "changed degraded wake acknowledgement failed"
+  fm_pr_poll_degraded_mark_notified "$state" task-a gitlab gitlab.example group/subgroup/project 7 train=on \
+    || fail "could not seed the train marker before disabling the degraded watch"
+
+  # A disabled sweep clears stale episode state before the feature is enabled
+  # again, so the same identity can wake in the new opt-in period.
+  rm -f "$dir/home/config/pr-degraded-watch" "$state/.last-check"
+  set +e
+  rc=0
+  FM_TEST_WATCH_STOP_WHEN="$state/.last-check" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=942 \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-disabled.out" 2> "$dir/watch-disabled.err" || rc=$?
+  set -e
+  [ "$rc" -eq 124 ] || fail "watcher ended before its bound during a disabled sweep: rc=$rc"
+  [ ! -e "$state/task-a.pr-poll-degraded" ] || fail "a disabled sweep retained the degraded marker"
+  [ ! -e "$state/task-a.pr-poll-train" ] || fail "a disabled sweep retained the merge-train marker"
+  : > "$dir/home/config/pr-degraded-watch"
+  ack_watcher_cycle "$state" || fail "disabled sweep acknowledgement failed"
+  rm -f "$state/.last-check"
+  FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=942 \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-reenabled.out" 2> "$dir/watch-reenabled.err"
+  [ "$(grep -c 'degraded after ready: degraded pipeline=942' "$dir/watch-reenabled.out")" -eq 1 ] \
+    || fail "re-enabling the degraded watch preserved a stale duplicate marker"
+  ack_watcher_cycle "$state" || fail "re-enabled degradation acknowledgement failed"
 
   # A merge-train drop wakes only after the car was seen on the train, once
   # per drop, and a re-queue arms the next drop.
@@ -2292,7 +2347,7 @@ injected'; do
     run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-9.out" 2> "$dir/watch-9.err"
   [ "$(grep -c 'degraded after ready: degraded train=dropped' "$dir/watch-9.out")" -eq 1 ] \
     || fail "watcher did not wake for a second drop after a re-queue"
-  pass "a degraded ready PR wakes once per head/pipeline transition and stays silent on a repeat"
+  pass "degraded watches reset after recovery and disabled periods"
 }
 
 test_degraded_wake_survives_an_unsaved_marker() {

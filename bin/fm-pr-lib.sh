@@ -1745,10 +1745,10 @@ fm_pr_poll_merge_notified_remove() {  # <state> <id>
 # --- degraded ready-PR marker -------------------------------------------------
 # A ready PR/MR that degraded after its ready report - GitHub required checks
 # turning failing, GitLab leaving an active merge train or a failing head
-# pipeline - wakes once per observed head/pipeline identity. The marker below
-# carries the identity that last woke, so the same degraded state stays silent
-# on later polls while a changed identity (a new head, a new failing pipeline)
-# wakes again. The identity is what the static poll (bin/fm-pr-poll.sh) emits
+# pipeline - wakes once per degraded episode. The marker below carries the
+# identity that last woke, so repeated degraded observations stay silent until
+# a healthy observation clears the episode or a changed identity wakes again.
+# The identity is what the static poll (bin/fm-pr-poll.sh) emits
 # after its "degraded " prefix, and both sides validate it so a forged or
 # malformed line can never enter the marker.
 fm_pr_poll_degraded_identity_valid() {  # <identity>
@@ -1845,16 +1845,21 @@ fm_pr_poll_degraded_mark_notified() {  # <state> <id> <provider> <host> <path> <
   fi
 }
 
-# Removed at teardown alongside the other per-task PR-poll artifacts
-# (bin/fm-teardown.sh) so a retired task id leaves no residue behind.
-fm_pr_poll_degraded_remove() {  # <state> <id>
+fm_pr_poll_degraded_clear() {  # <state> <id>
   local state=$1 id=$2 marker
   fm_pr_task_id_valid "$id" || return 1
   marker="$state/$id.pr-poll-degraded"
   [ ! -e "$marker" ] && [ ! -L "$marker" ] || {
     [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
-    rm -f -- "$marker" || return 1
+    rm -f -- "$marker"
   }
+}
+
+# Removed at teardown alongside the other per-task PR-poll artifacts
+# (bin/fm-teardown.sh) so a retired task id leaves no residue behind.
+fm_pr_poll_degraded_remove() {  # <state> <id>
+  local state=$1 id=$2
+  fm_pr_poll_degraded_clear "$state" "$id" || return 1
   fm_pr_poll_train_clear "$state" "$id"
 }
 

@@ -3,9 +3,10 @@
 # change poll sidecar.
 # It emits exactly one merged line for a merged change, exactly one degraded
 # line for a ready change that degraded after its ready report (a failing
-# check on GitHub, a failing head pipeline on GitLab), and stays silent
-# otherwise, including on every error, so a failed lookup can never be read as
-# a merge. A degraded line names the head or pipeline that degraded, the
+# check on GitHub, a failing head pipeline on GitLab), and an internal healthy
+# observation when the watcher requests recovery state. It stays silent on
+# every error, so a failed lookup can never be read as a merge. A degraded line
+# names the head or pipeline that degraded, the
 # failed jobs with the forge's failure reasons, and the pipeline or check
 # URL, so the wake says which test broke without a job-log dig; the watcher
 # dedupes one wake per transition on that head/pipeline (bin/fm-watch.sh).
@@ -28,10 +29,12 @@ export LC_ALL
 # a distinct status for the arming baseline read (--baseline, passed only by
 # bin/fm-pr-check.sh) so registration can tell "unknown" from "not degraded".
 unknown=0
+report_health=0
 degraded_enabled=0
 poll_home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
 [ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ] && degraded_enabled=1
-if [ "$#" -eq 6 ] && { [ "$1" = --validated ] || [ "$1" = --baseline ]; }; then
+if [ "$#" -eq 6 ] && { [ "$1" = --validated ] || [ "$1" = --observed ] || [ "$1" = --baseline ]; }; then
+  [ "$1" != --observed ] || report_health=1
   [ "$1" != --baseline ] || unknown=3
   provider=$2
   url=$3
@@ -131,6 +134,14 @@ case "$provider" in
                           | gsub("[\\n\\r\\t]"; " ")))]
             | join(",") | .[:300])
           + (if $u == "" then "" else " url=" + ($u | gsub("[\\n\\r\\t]"; " ")) end)
+      elif .state == "OPEN"
+        and ([.statusCheckRollup[]?] | length) > 0
+        and ([.statusCheckRollup[]?
+                | (.conclusion // .state // "") as $r
+                | select($r != "SUCCESS" and $r != "NEUTRAL" and $r != "SKIPPED")]
+             | length) == 0
+      then
+        "healthy head=" + (.headRefOid // "")
       else
         ""
       end' 2>/dev/null) || exit $unknown
@@ -138,17 +149,20 @@ case "$provider" in
       merged)
         printf '%s\n' merged
         ;;
-      'degraded head='*)
+      'degraded head='*|'healthy head='*)
         case $result in
           *$'\n'*) exit $unknown ;;
         esac
-        head=${result#'degraded head='}
+        head=${result#*'head='}
         head=${head%% *}
         case $head in
           ''|*[!0-9a-f]*) exit $unknown ;;
         esac
         [ "${#head}" -eq 40 ] || exit $unknown
         [ "${#result}" -le 2000 ] || exit 0
+        case $result in
+          healthy*) [ "$report_health" = 1 ] || exit 0 ;;
+        esac
         printf '%s\n' "$result"
         ;;
     esac
@@ -311,7 +325,7 @@ case "$provider" in
         then
           "degraded pipeline=\(.head_pipeline.id)"
         elif .state == "opened" or .state == "locked" then
-          "open \(if (.head_pipeline | type) == "object" and (.head_pipeline.id | type) == "number" then .head_pipeline.id else 0 end) \(.detailed_merge_status // "" | if type == "string" then . else "" end)"
+          "open \(if (.head_pipeline | type) == "object" and (.head_pipeline.id | type) == "number" then .head_pipeline.id else 0 end) \(if (.head_pipeline | type) == "object" and (.head_pipeline.status | type) == "string" then .head_pipeline.status else "" end) \(.detailed_merge_status // "" | if type == "string" then . else "" end)"
         else
           ""
         end
@@ -323,13 +337,25 @@ case "$provider" in
         reason=${result#open }
         pipeline=${reason%% *}
         reason=${reason#* }
+        pipeline_status=${reason%% *}
+        reason=${reason#* }
         case $reason in
           *[!a-z_]*) reason= ;;
+        esac
+        case $pipeline_status in
+          *[!a-z_]*) pipeline_status= ;;
         esac
         case $pipeline in
           ''|0*|*[!0-9]*) pipeline= ;;
         esac
         [ "${#pipeline}" -le 18 ] || pipeline=
+        health=
+        if [ "$report_health" = 1 ] && [ "$pipeline_status" = success ] && [ -n "$pipeline" ]; then
+          health="healthy pipeline=$pipeline"
+        fi
+        emit_health() {
+          [ -z "$health" ] || printf '%s\n' "$health"
+        }
         # stdout is the car record and stderr the CLI's diagnostics: a notice on
         # a good read must not spoil the record, nor noise on a 404 hide it.
         errfile=$(mktemp "${TMPDIR:-/tmp}/fm-pr-poll.XXXXXX") || exit $unknown
@@ -339,23 +365,25 @@ case "$provider" in
         rm -f "$errfile"
         if [ "$car_rc" -eq 0 ]; then
           if printf '%s' "$car" | jq -e 'type == "object" and (.id | type) == "number"' >/dev/null 2>&1; then
+            emit_health
             printf '%s\n' ontrain
-          elif [ "$unknown" -eq 3 ]; then
-            printf '%s\n' train=unknown
+          else
+            emit_health
+            [ "$unknown" -ne 3 ] || printf '%s\n' train=unknown
           fi
         elif [ "$car_rc" -ne 0 ]; then
           case $car_err in
             *'(HTTP 404)'*) ;;
-            *) [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0 ;;
+            *) emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0 ;;
           esac
-          trains=$(gitlab_detail_read "projects/$enc/merge_trains" 2>/dev/null) || { [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
+          trains=$(gitlab_detail_read "projects/$enc/merge_trains" 2>/dev/null) || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
           present=$(printf '%s' "$trains" | jq -er --argjson iid "$number" '
             if type == "array" then
               [ .[].cars[]? | select(.merge_request.iid == $iid) ] | length == 0
             else
               error("invalid merge train list")
-            end' 2>/dev/null) || { [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
-          [ "$present" = true ] || { [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
+            end' 2>/dev/null) || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
+          [ "$present" = true ] || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
           # A merge can remove the car between the initial MR read and the
           # train-list read. Recheck once, with the same hard read bound, so
           # stale open state cannot turn a merge into a drop wake.
@@ -375,6 +403,7 @@ case "$provider" in
           [ -z "$pipeline" ] || line="$line pipeline_url=https://$host/$path/-/pipelines/$pipeline"
           [ "$current_state" != unknown ] || line="$line mr_state=unconfirmed"
           [ "${#line}" -le 2000 ] || exit 0
+          emit_health
           printf '%s\n' "$line"
         fi
         exit 0

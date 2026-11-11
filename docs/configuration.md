@@ -860,7 +860,7 @@ The flag takes effect at the next check sweep, and is a home-local preference th
 ## Degraded PR watch (config/pr-degraded-watch)
 
 The optional local, gitignored `config/pr-degraded-watch` presence flag opts this home into waking once when a ready PR or MR degrades, including a GitHub failing check, a GitLab failed pipeline, or a merge-train drop.
-With the flag present, registration records a degraded/train baseline and each poll checks those states; repeated reports of the same transition remain silent.
+With the flag present, registration records a degraded/train baseline and each poll checks those states; repeated reports within one degraded episode remain silent, while a healthy observation resets the episode so the same head or pipeline can wake if it degrades again.
 Without the flag, registration performs no baseline read, polls make no GitHub rollup or GitLab JSON, pipeline, or train reads, and the watcher ignores `degraded` and `ontrain` results while retaining the existing merged-PR wake.
 The flag is home-local, is not inherited by secondmate homes, and takes effect on the next check sweep.
 

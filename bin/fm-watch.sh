@@ -4259,7 +4259,7 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --validated \
+          run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --observed \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
@@ -4272,6 +4272,9 @@ while :; do
           rejected_checks="$rejected_checks $c"
           continue
         fi
+      fi
+      if [ "$is_pr_poll" -eq 1 ] && [ "$PR_DEGRADED_WATCH_ENABLED" != 1 ]; then
+        fm_pr_poll_degraded_remove "$STATE" "$id" || exit 1
       fi
       if [ -n "$out" ]; then
         if [ "$(basename "$c")" = contributions.check.sh ]; then
@@ -4292,6 +4295,35 @@ EOF
           elif [ -n "$contribution_check_output" ]; then
             continue
           fi
+        fi
+        if [ "$is_pr_poll" -eq 1 ] && [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ]; then
+          case $out in
+            'healthy head='*|'healthy pipeline='*)
+              healthy_line=${out%%$'\n'*}
+              healthy_identity=${healthy_line#healthy }
+              if ! fm_pr_poll_degraded_identity_valid "$healthy_identity"; then
+                pr_poll_control_release || exit 1
+                touch "$STATE/.last-check"
+                triage_log "PR poll for $id emitted an unreadable healthy result; staying silent"
+                continue
+              fi
+              fm_pr_poll_degraded_clear "$STATE" "$id" || exit 1
+              if [ "$out" = "$healthy_line" ]; then
+                pr_poll_control_release || exit 1
+                touch "$STATE/.last-check"
+                continue
+              fi
+              out=${out#*$'\n'}
+              case $out in
+                *$'\n'*)
+                  pr_poll_control_release || exit 1
+                  touch "$STATE/.last-check"
+                  triage_log "PR poll for $id emitted unreadable recovery state; staying silent"
+                  continue
+                  ;;
+              esac
+              ;;
+          esac
         fi
         # One line, as the queued row stores it: wake consumers keep only
         # prefixed lines, so a later output line would otherwise be dropped.
@@ -4349,7 +4381,7 @@ EOF
           fi
           wake "$reason"
         elif [ "$is_pr_poll" -eq 1 ] \
-          && { [ "$out" = ontrain ] || [ "${out%% *}" = degraded ]; } \
+          && { [ "$out" = ontrain ] || [ "${out%% *}" = degraded ] || [ "${out%% *}" = healthy ]; } \
           && [ "$PR_DEGRADED_WATCH_ENABLED" != 1 ]; then
           pr_poll_control_release || exit 1
           touch "$STATE/.last-check"

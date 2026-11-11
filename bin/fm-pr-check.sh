@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Record a PR-ready task: store one validated canonical pr=<url> and the forge's
 # exact pr_head=<sha> when available, then atomically arm a static merge poll.
-# The poll also wakes when a ready pull request or merge request degrades
-# after its ready report - a failing check on GitHub, a failed head pipeline
-# on GitLab (the readable trace of a merge train dropping the merge request) -
+# With config/pr-degraded-watch present, the poll also wakes when a ready pull
+# request or merge request degrades after its ready report - a failing check on
+# GitHub, a failed head pipeline on GitLab (the readable trace of a merge train
+# dropping the merge request) -
 # one wake per head/pipeline transition naming the failed jobs, the forge's
 # failure reasons, and the pipeline or check URL, so the worker can be steered
 # to fix it; the merged wake itself is unchanged.
