@@ -2358,12 +2358,15 @@ injected'; do
   rm -f "$state/.last-check"
   set +e
   rc=0
-  FM_TEST_WATCH_STOP_WHEN="$state/.last-check" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_TRAIN=car \
+  FM_TEST_WATCH_STOP_WHEN="$state/.last-check" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS='[{"merge_request":{"iid":7}}]' \
     run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-5.out" 2> "$dir/watch-5.err" || rc=$?
   set -e
   [ "$rc" -eq 124 ] || fail "watcher ended before its bound on a step meant to stay silent (watch-5): rc=$rc"
   [ "$(grep -c 'degraded after ready' "$dir/watch-5.out")" -eq 0 ] \
-    || fail "watcher woke for a merge request that is on its train"
+    || fail "watcher woke for list-confirmed merge-train membership"
+  [ -f "$state/task-a.pr-poll-train" ] \
+    || fail "list-confirmed merge-train membership did not arm the drop marker"
   ack_watcher_cycle "$state" || fail "on-train cycle acknowledgement failed"
   rm -f "$state/.last-check"
   FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_DETAIL=need_rebase \
@@ -3895,7 +3898,7 @@ SH
 }
 
 test_gitlab_merge_watch() {
-  local dir state out rc url value noglab nojq noperl entry bindir name wide train started elapsed poll_pid waited hung page_full page_present page_env
+  local dir state out expected rc url value noglab nojq noperl entry bindir name wide train started elapsed poll_pid waited hung page_full page_present page_env
   dir=$(make_case gitlab-merge-watch)
   state="$dir/home/state"
   # The poll reads the merge request as JSON, so the fixture's search path
@@ -3917,11 +3920,13 @@ gitlab.example
 group/subgroup/project
 7" ] || fail "published GitLab sidecar bytes were not exact"
 
-  # Only an exact merged state wakes firstmate. Every other reading, including
-  # an unreadable merge request and a changed output format, stays silent.
+  # Only an exact merged state wakes firstmate. An open or locked train member
+  # reports membership without waking; every other non-merged reading stays silent.
   for value in opened closed locked '' not-a-state MERGED merged-but-not; do
     out=$(FM_TEST_GLAB_STATE="$value" FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
-    [ -z "$out" ] || fail "GitLab poll emitted for a non-merged state ($value): $out; $(tail -5 "$dir/glab.log")"
+    case $value in opened|locked|'') expected=ontrain ;; *) expected= ;; esac
+    [ "$out" = "$expected" ] \
+      || fail "GitLab poll misclassified a non-merged state ($value): $out; $(tail -5 "$dir/glab.log")"
   done
   out=$(FM_TEST_GLAB_STATE=merged run_poll "$dir")
   [ "$out" = merged ] || fail "GitLab poll did not emit exactly one merged line"
@@ -4122,31 +4127,31 @@ EOF
     || fail "GitLab poll lost the degraded wake when only the detail fetch failed: $out"
   for pipeline in success running pending canceled ''; do
     out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE="$pipeline" run_poll "$dir")
-    [ -z "$out" ] || fail "GitLab poll emitted for a non-failed head pipeline"
+    [ "$out" = ontrain ] || fail "GitLab poll did not retain train membership for a non-failed head pipeline: $out"
   done
   out=$(FM_TEST_GLAB_STATE=closed FM_TEST_GLAB_PIPELINE=failed run_poll "$dir")
   [ -z "$out" ] || fail "GitLab poll emitted a degraded line for a closed merge request"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=0 run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll emitted a degraded line for a pipeline without a readable id"
+  [ "$out" = ontrain ] || fail "GitLab poll lost train membership for a pipeline without a readable id: $out"
 
-  # A missing-car response stays silent when the flat train list still names
-  # the merge request, including when it appears on a later page.
+  # A missing-car response reports membership when the flat train list still
+  # names the merge request, including when it appears on a later page.
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
   [ "$out" = ontrain ] || fail "GitLab poll did not report a merge request on its train: $out"
   out=$(FM_TEST_GLAB_STDERR_NOTICE=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
   [ "$out" = ontrain ] || fail "a stderr notice on a good car read spoiled the on-train report: $out"
   out=$(FM_TEST_GLAB_STDERR_NOTICE=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
     FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll treated a flat-list train member as a train drop: $out"
+  [ "$out" = ontrain ] || fail "GitLab poll did not report a flat-list train member: $out"
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
     FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll missed a train member on the second page: $out"
+  [ "$out" = ontrain ] || fail "GitLab poll missed a train member on the second page: $out"
   [ "$(grep -F -c 'merge_trains?per_page=100&page=2' "$dir/glab.log")" -eq 1 ] \
     || fail "GitLab poll did not read the second merge-train page"
   out=$(FM_TEST_GLAB_STATE=locked FM_TEST_GLAB_PIPELINE=canceled FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_DETAIL=need_rebase \
     FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll treated a locked flat-list train member as a train drop: $out"
+  [ "$out" = ontrain ] || fail "GitLab poll did not report a locked flat-list train member: $out"
 
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \

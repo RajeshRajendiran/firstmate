@@ -468,7 +468,7 @@ case "$provider" in
           train_state=$(gitlab_train_list_state "$number" 2>/dev/null) \
             || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
           [ "$train_state" = present ] \
-            && { emit_health; [ "$unknown" -ne 3 ] || printf '%s\n' ontrain; exit 0; }
+            && { emit_health; printf '%s\n' ontrain; exit 0; }
           [ "$train_state" = absent ] \
             || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
           # A merge can remove the car between the initial MR read and the
