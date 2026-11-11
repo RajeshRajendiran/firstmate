@@ -120,9 +120,11 @@ case "$provider" in
         | to_entries
         | map({item: .value,
                group: (if .value.__typename == "CheckRun"
+                            and (.value.workflowName | type) == "string"
+                            and .value.workflowName != ""
                             and (.value.name | type) == "string"
                             and .value.name != ""
-                         then ["check", .value.name]
+                         then ["check", .value.workflowName, .value.name]
                          else ["entry", .key]
                          end),
                at: (.value.startedAt | settled_at)})

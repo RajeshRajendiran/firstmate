@@ -350,6 +350,7 @@ fi
 META_TMP=
 BASELINE_BACKUP=
 BASELINE_BACKUP_COMPLETE=0
+OBSOLETE_BASELINE_BACKUP=
 META_LOCK=
 META_LOCK_HELD=0
 MERGE_NOTICE_LOCK=
@@ -368,6 +369,8 @@ pr_check_cleanup() {
       echo "error: could not restore previous PR poll registration; backup retained at $BASELINE_BACKUP" >&2
     fi
   fi
+  [ -z "$OBSOLETE_BASELINE_BACKUP" ] || rm -rf -- "$OBSOLETE_BASELINE_BACKUP"
+  OBSOLETE_BASELINE_BACKUP=
   fm_pr_poll_cleanup
   [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
   if [ "$PR_POLL_PUBLISH_LOCK_HELD" = 1 ]; then
@@ -562,15 +565,16 @@ else
 fi
 fm_lock_release "$META_LOCK" || { [ -z "${BASELINE_BACKUP:-}" ] || baseline_failure; exit 1; }
 META_LOCK_HELD=0
+if [ -n "${BASELINE_BACKUP:-}" ]; then
+  OBSOLETE_BASELINE_BACKUP=$BASELINE_BACKUP BASELINE_BACKUP= BASELINE_BACKUP_COMPLETE=0
+fi
 if [ "$CONTROL_LOCK_HELD" = 1 ]; then
-  fm_lock_release "$CONTROL_LOCK" || { [ -z "${BASELINE_BACKUP:-}" ] || baseline_failure; exit 1; }
+  fm_lock_release "$CONTROL_LOCK" || exit 1
   CONTROL_LOCK_HELD=0
 fi
-if [ -n "${BASELINE_BACKUP:-}" ]; then
-  OBSOLETE_BASELINE_BACKUP=$BASELINE_BACKUP
-  BASELINE_BACKUP=
-  BASELINE_BACKUP_COMPLETE=0
+if [ -n "$OBSOLETE_BASELINE_BACKUP" ]; then
   rm -rf -- "$OBSOLETE_BASELINE_BACKUP"
+  OBSOLETE_BASELINE_BACKUP=
 fi
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 # The merge-time re-record is not a new review-ready PR, so it writes nothing.

@@ -2203,24 +2203,30 @@ test_github_degraded_poll() {
   out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://ci.example/run/1"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"TIMED_OUT"}]' run_poll "$dir")
   [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE,lint:TIMED_OUT url=https://ci.example/run/1' ] \
     || fail "GitHub poll did not name every failing check and the first check's URL: $out"
-  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' \
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' \
     run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
   [ "$out" = 'healthy head=0123456789abcdef0123456789abcdef01234567' ] \
     || fail "GitHub poll did not classify a check by its latest started run: $out"
-  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"STALE","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' run_poll "$dir")
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:00:00Z","completedAt":"2025-01-01T00:20:00Z"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"STALE","startedAt":"2025-01-01T00:10:00Z","completedAt":"2025-01-01T00:15:00Z"}]' run_poll "$dir")
   [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:STALE' ] \
     || fail "GitHub poll ignored the latest-started stale run beside an obsolete success: $out"
   for rollup in \
-    '[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]' \
-    '[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]'; do
+    '[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]' \
+    '[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]'; do
     out=$(FM_TEST_GH_ROLLUP="$rollup" run_poll "$dir")
     [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE' ] \
       || fail "GitHub poll discarded a failure with missing or tied start time: $out"
   done
-  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"NEUTRAL","startedAt":"2025-01-01T00:10:00Z"}]' \
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"},{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"NEUTRAL","startedAt":"2025-01-01T00:10:00Z"}]' \
     run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
   [ "$out" = 'healthy head=0123456789abcdef0123456789abcdef01234567' ] \
     || fail "GitHub poll retained an older failure behind tied green reruns: $out"
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","workflowName":"build","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","workflowName":"deploy","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]' run_poll "$dir")
+  [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE' ] \
+    || fail "GitHub poll let an unrelated workflow supersede a same-named failure: $out"
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2025-01-01T00:10:00Z"}]' run_poll "$dir")
+  [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE' ] \
+    || fail "GitHub poll discarded a same-named failure without workflow identity: $out"
 
   # A merged, pending, skipped, or green rollup, a non-open pull request, an
   # unreadable head, and a gh failure all stay silent.
@@ -2714,6 +2720,60 @@ SH
       || fail "TERM cleanup changed the old registered identity for $artifact"
   done
   pass "TERM during PR registration restores the old poll and its registered identities"
+}
+
+test_term_after_pr_publish_keeps_replacement_registration() {
+  local dir state url1 url2 pid i rc
+  dir=$(make_case term-after-pr-publish)
+  state="$dir/home/state"
+  url1=https://github.com/o/r/pull/1
+  url2=https://github.com/o/r/pull/2
+  write_task_meta "$dir" task-a
+  run_check_entry "$dir" task-a "$url1" >/dev/null 2>/dev/null \
+    || fail "could not seed the original PR registration"
+  cat > "$dir/fakebin/rm" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" $FM_TEST_CONTROL_LOCK "*)
+    "$FM_TEST_REAL_RM" "$@" || exit 1
+    : > "$FM_TEST_CONTROL_RELEASED"
+    while [ ! -e "$FM_TEST_CONTROL_RELEASE_CONTINUE" ]; do sleep 0.01; done
+    exit 0
+    ;;
+esac
+exec "$FM_TEST_REAL_RM" "$@"
+SH
+  chmod +x "$dir/fakebin/rm"
+  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
+    FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+    FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
+    FM_TEST_CONTROL_LOCK="$state/.control-task-a.lock" FM_TEST_REAL_RM="$(command -v rm)" \
+    FM_TEST_CONTROL_RELEASED="$dir/control-released" \
+    FM_TEST_CONTROL_RELEASE_CONTINUE="$dir/control-release-continue" \
+    PATH="$dir/fakebin:$BASE_PATH" "$PR_CHECK" task-a "$url2" \
+      > "$dir/rearm.out" 2> "$dir/rearm.err" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 1000 ] && [ ! -e "$dir/control-released" ]; do sleep 0.01; i=$((i + 1)); done
+  [ -e "$dir/control-released" ] || fail "re-arm did not reach successful publication before control unlock"
+  kill -TERM "$pid" || fail "could not interrupt re-arm after successful publication"
+  : > "$dir/control-release-continue"
+  set +e
+  wait "$pid"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "TERM-interrupted re-arm unexpectedly succeeded"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    || fail "TERM after publication invalidated the replacement registration: $(cat "$dir/rearm.err")"
+  [ "$(sed -n 4p "$state/task-a.pr-poll-registration")" = "$url2" ] \
+    || fail "TERM after publication restored the previous PR registration"
+  fm_pr_metadata_identity_parse "$state/task-a.meta" \
+    && [ "$FM_PR_META_URL" = "$url2" ] \
+    || fail "TERM after publication restored the previous PR metadata"
+  ! find "$state" -maxdepth 1 -type d -name '.fm-pr-baseline.*' -print | grep . >/dev/null \
+    || fail "TERM after publication left an obsolete baseline backup"
+  pass "TERM after successful publication keeps the replacement registration"
 }
 
 test_atomic_interruption_leaves_no_partial_artifact() {
@@ -5960,6 +6020,7 @@ test_degraded_poll_wakes_once_per_transition
 test_degraded_wake_survives_an_unsaved_marker
 test_rearm_failure_after_partial_publish_restores_watch_identities
 test_term_during_pr_baseline_move_restores_registration
+test_term_after_pr_publish_keeps_replacement_registration
 test_atomic_interruption_leaves_no_partial_artifact
 test_concurrent_watcher_sees_only_complete_publication
 test_poll_publication_refuses_unsafe_destinations
