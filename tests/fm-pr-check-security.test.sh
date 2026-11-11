@@ -279,14 +279,29 @@ case " $* " in
           *) printf '%s\n' 'glab: 404 Not Found (HTTP 404)' >&2; exit 1 ;;
         esac
         ;;
-      *merge_trains)
+      *merge_trains\?*)
         [ "${FM_TEST_GLAB_TRAIN_LIST_HANG:-0}" = 0 ] || exec sleep 60
-        if [ -n "${FM_TEST_GLAB_TRAINS+x}" ]; then
+        page=${2##*page=}
+        [ "${FM_TEST_GLAB_TRAINS_FAIL_PAGE:-}" != "$page" ] || exit 1
+        [ "${FM_TEST_GLAB_TRAINS_OVERSIZE_PAGE:-}" != "$page" ] || exec yes x
+        page_set=
+        page_data=
+        case $page in
+          1) page_set=${FM_TEST_GLAB_TRAINS_PAGE_1+x}; page_data=${FM_TEST_GLAB_TRAINS_PAGE_1:-} ;;
+          2) page_set=${FM_TEST_GLAB_TRAINS_PAGE_2+x}; page_data=${FM_TEST_GLAB_TRAINS_PAGE_2:-} ;;
+          3) page_set=${FM_TEST_GLAB_TRAINS_PAGE_3+x}; page_data=${FM_TEST_GLAB_TRAINS_PAGE_3:-} ;;
+          4) page_set=${FM_TEST_GLAB_TRAINS_PAGE_4+x}; page_data=${FM_TEST_GLAB_TRAINS_PAGE_4:-} ;;
+        esac
+        if [ -n "$page_set" ]; then
+          printf '%s\n' "$page_data"
+        elif [ "$page" != 1 ]; then
+          printf '%s\n' '[]'
+        elif [ -n "${FM_TEST_GLAB_TRAINS+x}" ]; then
           printf '%s\n' "$FM_TEST_GLAB_TRAINS"
         elif [ "${FM_TEST_GLAB_TRAIN:-}" = gone ]; then
           printf '%s\n' '[]'
         else
-          printf '%s\n' '[{"cars":[{"merge_request":{"iid":7}}]}]'
+          printf '%s\n' '[{"merge_request":{"iid":7}}]'
         fi
         ;;
       *merge_requests/*)
@@ -3816,13 +3831,15 @@ SH
 }
 
 test_gitlab_merge_watch() {
-  local dir state out rc url value noglab nojq noperl entry bindir name wide train started elapsed poll_pid waited hung
+  local dir state out rc url value noglab nojq noperl entry bindir name wide train started elapsed poll_pid waited hung page_full page_present page_env
   dir=$(make_case gitlab-merge-watch)
   state="$dir/home/state"
   # The poll reads the merge request as JSON, so the fixture's search path
   # carries the real jq the way arming requires it.
   ln -sf "$REAL_JQ" "$dir/fakebin/jq"
   url=https://gitlab.example/group/subgroup/project/-/merge_requests/7
+  page_full=$("$REAL_JQ" -cn '[range(100) | {merge_request:{iid:(. + 100)}}]')
+  page_present='[{"merge_request":{"iid":7}}]'
 
   write_poll_meta "$state" task-a "$url"
   fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" \
@@ -3839,8 +3856,8 @@ group/subgroup/project
   # Only an exact merged state wakes firstmate. Every other reading, including
   # an unreadable merge request and a changed output format, stays silent.
   for value in opened closed locked '' not-a-state MERGED merged-but-not; do
-    out=$(FM_TEST_GLAB_STATE="$value" run_poll "$dir")
-    [ -z "$out" ] || fail "GitLab poll emitted for a non-merged state"
+    out=$(FM_TEST_GLAB_STATE="$value" FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
+    [ -z "$out" ] || fail "GitLab poll emitted for a non-merged state ($value): $out; $(tail -5 "$dir/glab.log")"
   done
   out=$(FM_TEST_GLAB_STATE=merged run_poll "$dir")
   [ "$out" = merged ] || fail "GitLab poll did not emit exactly one merged line"
@@ -3969,6 +3986,7 @@ EOF
     || fail "GitLab failed-pipeline detail was unavailable without Perl: $out"
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2='[]' \
     FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" PATH="$noperl" \
     bash "$dir/home/state/task-a.check.sh")
   [ "$out" = "degraded train=dropped url=$url reason=mergeable pipeline_url=https://gitlab.example/group/subgroup/project/-/pipelines/941" ] \
@@ -3980,10 +3998,27 @@ EOF
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
     FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" \
     PATH="$noperl" "$PR_CHECK" task-no-perl "$url" >/dev/null 2> "$dir/no-perl-register.err" \
     || fail "GitLab degraded-watch registration required Perl: $(cat "$dir/no-perl-register.err")"
   [ -f "$dir/home/state/task-no-perl.check.sh" ] \
     || fail "GitLab degraded-watch registration without Perl published no poll"
+  fm_pr_poll_degraded_already_notified "$state" task-no-perl gitlab gitlab.example group/subgroup/project 7 train=on \
+    || fail "GitLab registration did not find the merge request on a later train-list page"
+
+  write_task_meta "$dir" task-pagination-unknown
+  if FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
+      FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
+      FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+      FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
+      FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+      FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_full" \
+      FM_TEST_GLAB_TRAINS_PAGE_3="$page_full" FM_TEST_GLAB_TRAINS_PAGE_4="$page_full" \
+      PATH="$noperl" "$PR_CHECK" task-pagination-unknown "$url" >/dev/null 2> "$dir/pagination-unknown.err"; then
+    fail "GitLab registration inferred absence from incomplete train-list pagination"
+  fi
+  [ ! -e "$state/task-pagination-unknown.check.sh" ] \
+    || fail "incomplete train-list pagination published a GitLab poll"
 
   for train in '' gone; do
     rm -f "$dir/glab.log.train"
@@ -4022,22 +4057,50 @@ EOF
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=0 run_poll "$dir")
   [ -z "$out" ] || fail "GitLab poll emitted a degraded line for a pipeline without a readable id"
 
-  # A missing-car response is ambiguous and stays silent; only a present car
-  # is sufficient evidence for ontrain.
+  # A missing-car response stays silent when the flat train list still names
+  # the merge request, including when it appears on a later page.
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
   [ "$out" = ontrain ] || fail "GitLab poll did not report a merge request on its train: $out"
   out=$(FM_TEST_GLAB_STDERR_NOTICE=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
   [ "$out" = ontrain ] || fail "a stderr notice on a good car read spoiled the on-train report: $out"
   out=$(FM_TEST_GLAB_STDERR_NOTICE=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-    FM_TEST_GLAB_TRAINS='[{"cars":[{"merge_request":{"iid":7}}]}]' run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll treated an ambiguous car-endpoint 404 as a train drop: $out"
+    FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
+  [ -z "$out" ] || fail "GitLab poll treated a flat-list train member as a train drop: $out"
+  : > "$dir/glab.log"
+  out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" run_poll "$dir")
+  [ -z "$out" ] || fail "GitLab poll missed a train member on the second page: $out"
+  [ "$(grep -F -c 'merge_trains?per_page=100&page=2' "$dir/glab.log")" -eq 1 ] \
+    || fail "GitLab poll did not read the second merge-train page"
   out=$(FM_TEST_GLAB_STATE=locked FM_TEST_GLAB_PIPELINE=canceled FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_DETAIL=need_rebase \
-    FM_TEST_GLAB_TRAINS='[{"cars":[{"merge_request":{"iid":7}}]}]' run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll treated an ambiguous car-endpoint 404 as a train drop: $out"
+    FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
+  [ -z "$out" ] || fail "GitLab poll treated a locked flat-list train member as a train drop: $out"
+
+  : > "$dir/glab.log"
+  out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_full" \
+    FM_TEST_GLAB_TRAINS_PAGE_3="$page_full" FM_TEST_GLAB_TRAINS_PAGE_4="$page_full" run_poll "$dir")
+  [ -z "$out" ] || fail "GitLab poll inferred absence after exhausting its train-list page bound: $out"
+  [ "$(grep -F -c 'merge_trains?per_page=100&page=' "$dir/glab.log")" -eq 4 ] \
+    || fail "GitLab train-list pagination did not stop at its four-page bound"
+  for value in transport invalid oversized; do
+    case $value in
+      transport) page_env=(FM_TEST_GLAB_TRAINS_FAIL_PAGE=2) ;;
+      invalid) page_env=(FM_TEST_GLAB_TRAINS_PAGE_2='{"invalid":true}') ;;
+      oversized) page_env=(FM_TEST_GLAB_TRAINS_OVERSIZE_PAGE=2) ;;
+    esac
+    out=$(env FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+      FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" "${page_env[@]}" \
+      FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+      FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
+      PATH="$dir/fakebin:$BASE_PATH" bash "$dir/home/state/task-a.check.sh")
+    [ -z "$out" ] || fail "GitLab poll inferred absence after a $value train-list page: $out"
+  done
   # A train drop names only the pipeline link, so a merge request never on a
   # train costs no pipeline detail reads on each poll.
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2='[]' \
     FM_TEST_GLAB_JOBS='[{"name":"ruby","status":"failed","failure_reason":"script_failure"}]' \
     FM_TEST_GLAB_BRIDGES='[{"name":"child","status":"failed","downstream_pipeline":{"id":77}}]' \
     FM_TEST_GLAB_CHILD_JOBS='[{"name":"e2e test","status":"failed","failure_reason":"script_failure"}]' \
@@ -4046,6 +4109,8 @@ EOF
     || fail "GitLab train drop did not name only the pipeline link: $out"
   ! grep -q 'api projects/.*/pipelines/' "$dir/glab.log" \
     || fail "GitLab train drop read pipeline details: $(cat "$dir/glab.log")"
+  [ "$(grep -F -c 'merge_trains?per_page=100&page=2' "$dir/glab.log")" -eq 1 ] \
+    || fail "GitLab poll inferred train absence before reading the final page"
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=merged FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_TRAINS='[]' run_poll "$dir")
   [ "$out" = merged ] || fail "a merged MR missing from the active train list was not reported as merged: $out"

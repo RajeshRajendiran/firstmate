@@ -223,7 +223,13 @@ case "$provider" in
     # Without jq the poll falls back to the plain state field,
     # which keeps the merged wake for a watch armed before jq was required.
     enc=${path//\//%2F}
-    gitlab_detail_read() (  # <api path>
+    gitlab_detail_read() (  # <api path> [seconds] [max bytes]
+        limit=${2:-5}
+        max_bytes=${3:-1048576}
+        case $limit:$max_bytes in
+          *[!0-9:]*|0:*|*:0) exit 1 ;;
+        esac
+        cap=$((max_bytes + 1))
         output=$(mktemp "${TMPDIR:-/tmp}/fm-pr-poll-detail.XXXXXX") || exit 1
         deadline="$output.deadline"
         child_pid=
@@ -248,13 +254,13 @@ case "$provider" in
         trap 'gitlab_detail_stop 143' TERM
         case $- in *m*) monitor_was_on=1 ;; *) monitor_was_on=0 ;; esac
         set -m
-        GITLAB_HOST=$host bash -c 'set -o pipefail; glab api "$1" | head -c 1048577' _ "$1" > "$output" &
+        GITLAB_HOST=$host bash -c 'set -o pipefail; glab api "$2" | head -c "$1"' _ "$cap" "$1" > "$output" &
         child_pid=$!
         [ "$monitor_was_on" -eq 1 ] || set +m
         (
           sleep_pid=
           trap '[ -z "$sleep_pid" ] || kill "$sleep_pid" 2>/dev/null; exit 0' HUP INT TERM
-          sleep 5 &
+          sleep "$limit" &
           sleep_pid=$!
           wait "$sleep_pid" 2>/dev/null || exit 0
           printf 'expired\n' > "$deadline"
@@ -275,10 +281,35 @@ case "$provider" in
         watchdog_pid=
         [ "$child_rc" -eq 0 ] || gitlab_detail_stop "$child_rc"
         bytes=$(wc -c < "$output" 2>/dev/null) || gitlab_detail_stop 1
-        [ "$bytes" -le 1048576 ] || gitlab_detail_stop 1
+        [ "$bytes" -le "$max_bytes" ] || gitlab_detail_stop 1
         cat "$output" || gitlab_detail_stop 1
         gitlab_detail_stop 0
     )
+    gitlab_train_list_state() {  # <merge request iid>
+        local iid=$1 page=1 started=$SECONDS seconds page_json page_state
+        while [ "$page" -le 4 ]; do
+          seconds=$((5 - (SECONDS - started)))
+          [ "$seconds" -gt 0 ] || return 1
+          page_json=$(gitlab_detail_read \
+            "projects/$enc/merge_trains?per_page=100&page=$page" "$seconds" 262144) || return 1
+          page_state=$(printf '%s' "$page_json" | jq -er --argjson iid "$iid" '
+            if type == "array" and length <= 100
+              and all(.[]; type == "object"
+                and (.merge_request | type) == "object"
+                and (.merge_request.iid | type) == "number")
+            then
+              if any(.[]; .merge_request.iid == $iid) then "present"
+              else "absent \(length)"
+              end
+            else
+              error("invalid merge train list")
+            end' 2>/dev/null) || return 1
+          [ "$page_state" != present ] || { printf '%s\n' present; return 0; }
+          [ "${page_state#absent }" -eq 100 ] || { printf '%s\n' absent; return 0; }
+          page=$((page + 1))
+        done
+        return 1
+    }
     gitlab_failure_detail() {  # <pipeline>; sets detail
         # The degraded line names the failed jobs with their forge failure
         # reasons, following a failed bridge into its child pipeline so the
@@ -415,14 +446,12 @@ case "$provider" in
             *'(HTTP 404)'*) ;;
             *) emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0 ;;
           esac
-          trains=$(gitlab_detail_read "projects/$enc/merge_trains" 2>/dev/null) || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
-          present=$(printf '%s' "$trains" | jq -er --argjson iid "$number" '
-            if type == "array" then
-              [ .[].cars[]? | select(.merge_request.iid == $iid) ] | length == 0
-            else
-              error("invalid merge train list")
-            end' 2>/dev/null) || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
-          [ "$present" = true ] || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
+          train_state=$(gitlab_train_list_state "$number" 2>/dev/null) \
+            || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
+          [ "$train_state" = present ] \
+            && { emit_health; [ "$unknown" -ne 3 ] || printf '%s\n' ontrain; exit 0; }
+          [ "$train_state" = absent ] \
+            || { emit_health; [ "$unknown" -eq 3 ] && printf '%s\n' train=unknown; exit 0; }
           # A merge can remove the car between the initial MR read and the
           # train-list read. Recheck once, with the same hard read bound, so
           # stale open state cannot turn a merge into a drop wake.
@@ -479,18 +508,13 @@ case "$provider" in
           if [ -n "$baseline_car" ] && printf '%s' "$baseline_car" | jq -e 'type == "object" and (.id | type) == "number"' >/dev/null 2>&1; then
             printf '%s\n' ontrain
           else
-            baseline_trains=$(gitlab_detail_read "projects/$enc/merge_trains" 2>/dev/null) || baseline_trains=
-            baseline_absent=$(printf '%s' "$baseline_trains" | jq -er --argjson iid "$number" '
-              if type == "array" then
-                [ .[].cars[]? | select(.merge_request.iid == $iid) ] | length == 0
-              else
-                error("invalid merge train list")
-              end' 2>/dev/null) || baseline_absent=false
-            if [ "$baseline_absent" = true ]; then
-              :
-            else
-              printf '%s\n' train=unknown
-            fi
+            baseline_train_state=$(gitlab_train_list_state "$number" 2>/dev/null) \
+              || baseline_train_state=unknown
+            case $baseline_train_state in
+              present) printf '%s\n' ontrain ;;
+              absent) ;;
+              *) printf '%s\n' train=unknown ;;
+            esac
           fi
         fi
         ;;
