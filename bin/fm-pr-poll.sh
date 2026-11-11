@@ -223,21 +223,62 @@ case "$provider" in
     # Without jq the poll falls back to the plain state field,
     # which keeps the merged wake for a watch armed before jq was required.
     enc=${path//\//%2F}
-    gitlab_detail_read() {  # <api path>
-        # Each detail read gets its own hard limit of five seconds, so a hung
-        # read is cut rather than holding the poll until the watcher's check
-        # timeout kills it before it prints. This body sources nothing, so the
-        # limit is the same perl fork-and-kill bound the watcher falls back to
-        # for its own checks: the read runs in its own process group, which
-        # gets TERM then KILL at the deadline. A bare alarm is not enough,
-        # because glab's Go runtime ignores SIGALRM. A TERM, INT, or HUP that
-        # stops the poll mid-read, such as the watcher's own check timeout,
-        # is passed to that group the same way and the read is reaped before
-        # perl exits, so a hung glab never outlives the watcher. Without perl
-        # no read can be bounded, so gitlab_failure_detail makes none.
-        # shellcheck disable=SC2016  # single quotes are deliberate: Perl expands its own variables.
-        GITLAB_HOST=$host perl -e 'my $t = shift; my $pid = fork; exit 1 unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV or exit 127 } sub stop { kill "TERM", -$pid; select undef, undef, undef, 0.1; kill "KILL", -$pid; waitpid $pid, 0; exit $_[0] } local $SIG{ALRM} = sub { stop(124) }; local $SIG{TERM} = sub { stop(143) }; local $SIG{INT} = sub { stop(130) }; local $SIG{HUP} = sub { stop(129) }; alarm $t; waitpid $pid, 0; exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' 5 glab api "$1"
-    }
+    gitlab_detail_read() (  # <api path>
+        output=$(mktemp "${TMPDIR:-/tmp}/fm-pr-poll-detail.XXXXXX") || exit 1
+        deadline="$output.deadline"
+        child_pid=
+        watchdog_pid=
+        gitlab_detail_stop() {
+          trap - HUP INT TERM
+          if [ -n "$child_pid" ]; then
+            kill -TERM -- "-$child_pid" 2>/dev/null || true
+            sleep 0.2
+            kill -KILL -- "-$child_pid" 2>/dev/null || true
+            wait "$child_pid" 2>/dev/null || true
+          fi
+          if [ -n "$watchdog_pid" ]; then
+            kill "$watchdog_pid" 2>/dev/null || true
+            wait "$watchdog_pid" 2>/dev/null || true
+          fi
+          rm -f -- "$output" "$deadline"
+          exit "$1"
+        }
+        trap 'gitlab_detail_stop 129' HUP
+        trap 'gitlab_detail_stop 130' INT
+        trap 'gitlab_detail_stop 143' TERM
+        case $- in *m*) monitor_was_on=1 ;; *) monitor_was_on=0 ;; esac
+        set -m
+        GITLAB_HOST=$host bash -c 'set -o pipefail; glab api "$1" | head -c 1048577' _ "$1" > "$output" &
+        child_pid=$!
+        [ "$monitor_was_on" -eq 1 ] || set +m
+        (
+          sleep_pid=
+          trap '[ -z "$sleep_pid" ] || kill "$sleep_pid" 2>/dev/null; exit 0' HUP INT TERM
+          sleep 5 &
+          sleep_pid=$!
+          wait "$sleep_pid" 2>/dev/null || exit 0
+          printf 'expired\n' > "$deadline"
+          kill -TERM -- "-$child_pid" 2>/dev/null || true
+          sleep 0.2
+          kill -KILL -- "-$child_pid" 2>/dev/null || true
+        ) &
+        watchdog_pid=$!
+        if wait "$child_pid" 2>/dev/null; then child_rc=0; else child_rc=$?; fi
+        child_pid=
+        if [ -s "$deadline" ]; then
+          wait "$watchdog_pid" 2>/dev/null || true
+          watchdog_pid=
+          gitlab_detail_stop 124
+        fi
+        kill "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+        watchdog_pid=
+        [ "$child_rc" -eq 0 ] || gitlab_detail_stop "$child_rc"
+        bytes=$(wc -c < "$output" 2>/dev/null) || gitlab_detail_stop 1
+        [ "$bytes" -le 1048576 ] || gitlab_detail_stop 1
+        cat "$output" || gitlab_detail_stop 1
+        gitlab_detail_stop 0
+    )
     gitlab_failure_detail() {  # <pipeline>; sets detail
         # The degraded line names the failed jobs with their forge failure
         # reasons, following a failed bridge into its child pipeline so the
@@ -249,10 +290,8 @@ case "$provider" in
         # started once this poll has run ten seconds - keeps a large or slow
         # pipeline graph inside the watcher's check timeout, so the known
         # failure is still emitted with whatever detail the budget allowed
-        # rather than killed before it prints. Without perl to bound a read,
-        # the failure is emitted with no detail rather than risk one.
+        # rather than killed before it prints.
         detail=
-        command -v perl >/dev/null 2>&1 || return 0
         seen=
         frontier="$1:0"
         depth=0

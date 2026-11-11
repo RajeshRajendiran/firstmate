@@ -280,6 +280,7 @@ case " $* " in
         esac
         ;;
       *merge_trains)
+        [ "${FM_TEST_GLAB_TRAIN_LIST_HANG:-0}" = 0 ] || exec sleep 60
         if [ -n "${FM_TEST_GLAB_TRAINS+x}" ]; then
           printf '%s\n' "$FM_TEST_GLAB_TRAINS"
         elif [ "${FM_TEST_GLAB_TRAIN:-}" = gone ]; then
@@ -3941,9 +3942,7 @@ group/subgroup/project
     fail "a stopped GitLab poll left its hung detail read running"
   fi
   rm -f "$dir/glab.log.hangpid"
-  # Without perl no detail read can be bounded, so none is made: both paths
-  # emit the known failure at once, with no job names, even when every detail
-  # read would hang.
+  # The static poll keeps its detail reads bounded when Perl is absent.
   noperl="$dir/noperl"
   mkdir -p "$noperl"
   while IFS= read -r bindir; do
@@ -3960,22 +3959,54 @@ $(printf '%s\n' "$BASE_PATH" | tr ':' '\n')
 EOF
   ! PATH="$noperl" command -v perl >/dev/null 2>&1 \
     || fail "the perl-free search path still resolved perl"
+
+  rm -f "$dir/glab.log.train"
+  out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
+    FM_TEST_GLAB_JOBS='[{"name":"ruby","status":"failed","failure_reason":"script_failure"}]' \
+    FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" PATH="$noperl" \
+    bash "$dir/home/state/task-a.check.sh")
+  [ "$out" = 'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941 jobs=ruby:script_failure' ] \
+    || fail "GitLab failed-pipeline detail was unavailable without Perl: $out"
+  rm -f "$dir/glab.log.train"
+  out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" PATH="$noperl" \
+    bash "$dir/home/state/task-a.check.sh")
+  [ "$out" = "degraded train=dropped url=$url reason=mergeable pipeline_url=https://gitlab.example/group/subgroup/project/-/pipelines/941" ] \
+    || fail "GitLab train-drop observation was unavailable without Perl: $out"
+
+  write_task_meta "$dir" task-no-perl
+  FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
+    FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+    FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
+    FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    PATH="$noperl" "$PR_CHECK" task-no-perl "$url" >/dev/null 2> "$dir/no-perl-register.err" \
+    || fail "GitLab degraded-watch registration required Perl: $(cat "$dir/no-perl-register.err")"
+  [ -f "$dir/home/state/task-no-perl.check.sh" ] \
+    || fail "GitLab degraded-watch registration without Perl published no poll"
+
   for train in '' gone; do
     rm -f "$dir/glab.log.train"
     : > "$dir/glab.log"
     started=$SECONDS
     out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE="$([ -n "$train" ] && echo success || echo failed)" \
-      FM_TEST_GLAB_TRAIN="$train" FM_TEST_GLAB_DETAIL_HANG=1 FM_TEST_GLAB_LOG="$dir/glab.log" \
+      FM_TEST_GLAB_TRAIN="$train" FM_TEST_GLAB_DETAIL_HANG=1 FM_TEST_GLAB_TRAIN_LIST_HANG="$([ -n "$train" ] && echo 1 || echo 0)" FM_TEST_GLAB_LOG="$dir/glab.log" \
       FM_TEST_JQ="$REAL_JQ" PATH="$noperl" bash "$dir/home/state/task-a.check.sh")
     elapsed=$((SECONDS - started))
     case $out in
-      'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941') [ -z "$train" ] || fail "GitLab train drop emitted a pipeline line without perl: $out" ;;
-      '') [ -n "$train" ] || fail "GitLab pipeline failure was lost without perl: $out" ;;
-      *) fail "GitLab poll emitted an unbounded train drop without perl (train=$train): $out" ;;
+      'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941') [ -z "$train" ] || fail "GitLab train drop emitted a pipeline line without Perl: $out" ;;
+      '') [ -n "$train" ] || fail "GitLab pipeline failure was lost without Perl: $out" ;;
+      *) fail "GitLab poll emitted after an unreadable bounded detail response without Perl (train=$train): $out" ;;
     esac
-    ! grep -q 'api projects/.*/pipelines/' "$dir/glab.log" \
-      || fail "GitLab poll made an unbounded detail read without perl (train=$train)"
-    [ "$elapsed" -lt 10 ] || fail "GitLab poll without perl took ${elapsed}s (train=$train)"
+    if [ -z "$train" ]; then
+      grep -q 'api projects/.*/pipelines/' "$dir/glab.log" \
+        || fail "GitLab poll skipped bounded pipeline detail reads without Perl"
+      [ "$elapsed" -lt 15 ] || fail "GitLab failed-pipeline detail bound took ${elapsed}s without Perl"
+    else
+      grep -q 'api projects/.*/merge_trains' "$dir/glab.log" \
+        || fail "GitLab poll skipped the bounded train-list read without Perl"
+      [ "$elapsed" -lt 10 ] || fail "GitLab train-list detail bound took ${elapsed}s without Perl"
+    fi
   done
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
