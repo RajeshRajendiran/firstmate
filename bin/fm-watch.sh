@@ -4259,7 +4259,15 @@ while :; do
             triage_log "PR poll for $id changed before its validated check; skipping the stale snapshot"
             continue
           fi
-          run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" --observed \
+          is_degraded_watch=0
+          poll_mode=--validated
+          if [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ] \
+            && fm_pr_poll_degraded_already_notified "$STATE" "$id" \
+              "$provider" "$host" "$path" "$number" baseline=accepted; then
+            is_degraded_watch=1
+            poll_mode=--observed
+          fi
+          run_check_capture "$SCRIPT_DIR/fm-pr-poll.sh" "$poll_mode" \
             "$provider" "$url" "$host" "$path" "$number" || exit 1
           out=$FM_CHECK_RESULT
         elif fm_custom_check_snapshot_prepare "$STATE" "$id"; then
@@ -4296,7 +4304,7 @@ EOF
             continue
           fi
         fi
-        if [ "$is_pr_poll" -eq 1 ] && [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ]; then
+        if [ "$is_pr_poll" -eq 1 ] && [ "$is_degraded_watch" = 1 ]; then
           case $out in
             'healthy head='*|'healthy pipeline='*)
               healthy_line=${out%%$'\n'*}
@@ -4382,11 +4390,11 @@ EOF
           wake "$reason"
         elif [ "$is_pr_poll" -eq 1 ] \
           && { [ "$out" = ontrain ] || [ "${out%% *}" = degraded ] || [ "${out%% *}" = healthy ]; } \
-          && [ "$PR_DEGRADED_WATCH_ENABLED" != 1 ]; then
+          && [ "$is_degraded_watch" != 1 ]; then
           pr_poll_control_release || exit 1
           touch "$STATE/.last-check"
           continue
-        elif [ "$is_pr_poll" -eq 1 ] && [ "$out" = ontrain ] && [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ]; then
+        elif [ "$is_pr_poll" -eq 1 ] && [ "$out" = ontrain ] && [ "$is_degraded_watch" = 1 ]; then
           # A ready MR still on its merge train: remember it in the train
           # marker so a later drop (the car gone while the MR is still open)
           # is a transition worth a wake. The drop wake clears that marker,
@@ -4399,7 +4407,7 @@ EOF
           pr_poll_control_release || exit 1
           touch "$STATE/.last-check"
           continue
-        elif [ "$is_pr_poll" -eq 1 ] && [ "${out%% *}" = degraded ] && [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ]; then
+        elif [ "$is_pr_poll" -eq 1 ] && [ "${out%% *}" = degraded ] && [ "$is_degraded_watch" = 1 ]; then
           # A ready PR/MR that degraded after its ready report - a failing
           # check on GitHub, a failed head pipeline on GitLab, the readable
           # trace of a merge train dropping the merge request - would

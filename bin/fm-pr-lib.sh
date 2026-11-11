@@ -1773,7 +1773,7 @@ fm_pr_poll_degraded_identity_valid() {  # <identity>
       esac
       [ "${#value}" -le 18 ] || return 1
       ;;
-    train=on|train=dropped) ;;
+    train=on|train=dropped|baseline=accepted) ;;
     *) return 1 ;;
   esac
 }
@@ -1810,6 +1810,8 @@ fm_pr_poll_degraded_already_notified() {  # <state> <id> <provider> <host> <path
   state_device=$(fm_pr_file_device "$state") || return 1
   if [ "$identity" = train=on ]; then
     marker="$state/$id.pr-poll-train"
+  elif [ "$identity" = baseline=accepted ]; then
+    marker="$state/$id.pr-poll-baseline"
   else
     marker="$state/$id.pr-poll-degraded"
   fi
@@ -1825,6 +1827,8 @@ fm_pr_poll_degraded_mark_notified() {  # <state> <id> <provider> <host> <path> <
   state_device=$(fm_pr_file_device "$state") || return 1
   if [ "$identity" = train=on ]; then
     marker="$state/$id.pr-poll-train"
+  elif [ "$identity" = baseline=accepted ]; then
+    marker="$state/$id.pr-poll-baseline"
   else
     marker="$state/$id.pr-poll-degraded"
   fi

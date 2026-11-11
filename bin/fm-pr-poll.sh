@@ -32,16 +32,19 @@ unknown=0
 report_health=0
 degraded_enabled=0
 poll_home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
-[ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ] && degraded_enabled=1
 if [ "$#" -eq 6 ] && { [ "$1" = --validated ] || [ "$1" = --observed ] || [ "$1" = --baseline ]; }; then
   [ "$1" != --observed ] || report_health=1
   [ "$1" != --baseline ] || unknown=3
+  if [ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ]; then
+    [ "$1" != --observed ] && [ "$1" != --baseline ] || degraded_enabled=1
+  fi
   provider=$2
   url=$3
   host=$4
   path=$5
   number=$6
 elif [ "$#" -eq 0 ]; then
+  [ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ] && degraded_enabled=1
   case "$0" in
     *.check.sh) data=${0%.check.sh}.pr-poll ;;
     *) exit 0 ;;
@@ -180,7 +183,40 @@ case "$provider" in
           ''|*[!0-9a-f]*) exit $unknown ;;
         esac
         [ "${#head}" -eq 40 ] || exit $unknown
-        [ "${#result}" -le 2000 ] || exit 0
+        if [ "${#result}" -gt 2000 ]; then
+          case $result in
+            'degraded head='*)
+              base="degraded head=$head"
+              jobs=
+              case $result in
+                *' jobs='*)
+                  jobs=${result#*' jobs='}
+                  jobs=${jobs%% url=*}
+                  ;;
+              esac
+              url_part=
+              case $result in
+                *' url='*)
+                  url_part=${result#*' url='}
+                  ;;
+              esac
+              result=$base
+              if [ -n "$jobs" ] && [ "$((${#result} + 6 + ${#jobs}))" -le 2000 ]; then
+                result="$result jobs=$jobs"
+              fi
+              if [ -n "$url_part" ]; then
+                max_url=$((2000 - ${#result} - 5))
+                if [ "$max_url" -ge 10 ]; then
+                  result="$result url=${url_part:0:$max_url}"
+                fi
+              fi
+              ;;
+            *)
+              [ "${#result}" -le 2000 ] || exit $unknown
+              ;;
+          esac
+        fi
+        [ "${#result}" -le 2000 ] || exit $unknown
         case $result in
           healthy*) [ "$report_health" = 1 ] || exit 0 ;;
         esac
@@ -487,10 +523,31 @@ case "$provider" in
             closed) exit 0 ;;
             *) [ "$unknown" -ne 3 ] || printf '%s\n' train=unknown; exit 0 ;;
           esac
-          line="degraded train=dropped url=$url"
-          [ -z "$reason" ] || line="$line reason=$reason"
-          [ -z "$pipeline" ] || line="$line pipeline_url=https://$host/$path/-/pipelines/$pipeline"
-          [ "${#line}" -le 2000 ] || exit 0
+          line="degraded train=dropped"
+          mr_url_part=" url=$url"
+          [ -z "$reason" ] || reason_part=" reason=$reason"
+          [ -z "$pipeline" ] || p_url_part=" pipeline_url=https://$host/$path/-/pipelines/$pipeline"
+
+          if [ "$((${#line} + ${#mr_url_part}))" -le 2000 ]; then
+            line="$line$mr_url_part"
+          else
+            avail=$((2000 - ${#line} - 5))
+            [ "$avail" -lt 10 ] || line="$line url=${url:0:$avail}"
+          fi
+
+          if [ -n "${reason_part:-}" ]; then
+            if [ "$((${#line} + ${#reason_part}))" -le 2000 ]; then
+              line="$line$reason_part"
+            else
+              avail=$((2000 - ${#line} - 8))
+              [ "$avail" -lt 1 ] || line="$line reason=${reason:0:$avail}"
+            fi
+          fi
+
+          if [ -n "${p_url_part:-}" ] && [ "$((${#line} + ${#p_url_part}))" -le 2000 ]; then
+            line="$line$p_url_part"
+          fi
+          [ "${#line}" -le 2000 ] || exit $unknown
           emit_health
           printf '%s\n' "$line"
         fi
@@ -503,25 +560,39 @@ case "$provider" in
         ;;
       'degraded pipeline='*)
         case $result in
-          *$'\n'*) exit 0 ;;
+          *$'\n'*) exit $unknown ;;
         esac
         pipeline=${result#'degraded pipeline='}
         case $pipeline in
           [1-9]*) ;;
-          *) exit 0 ;;
+          *) exit $unknown ;;
         esac
         case $pipeline in
-          *[!0-9]*) exit 0 ;;
+          *[!0-9]*) exit $unknown ;;
         esac
-        [ "${#pipeline}" -le 18 ] || exit 0
+        [ "${#pipeline}" -le 18 ] || exit $unknown
         gitlab_failure_detail "$pipeline"
         detail=$(printf '%s' "$detail" | head -c 300)
         case $detail in
           *$'\n'*) detail= ;;
         esac
-        line="degraded pipeline=$pipeline url=https://$host/$path/-/pipelines/$pipeline"
-        [ -z "$detail" ] || line="$line jobs=$detail"
-        [ "${#line}" -le 2000 ] || exit 0
+        line="degraded pipeline=$pipeline"
+        p_url="https://$host/$path/-/pipelines/$pipeline"
+        if [ "$((${#line} + 5 + ${#p_url}))" -le 2000 ]; then
+          line="$line url=$p_url"
+        else
+          avail=$((2000 - ${#line} - 5))
+          [ "$avail" -lt 10 ] || line="$line url=${p_url:0:$avail}"
+        fi
+        if [ -n "$detail" ]; then
+          if [ "$((${#line} + 6 + ${#detail}))" -le 2000 ]; then
+            line="$line jobs=$detail"
+          else
+            avail=$((2000 - ${#line} - 6))
+            [ "$avail" -lt 1 ] || line="$line jobs=${detail:0:$avail}"
+          fi
+        fi
+        [ "${#line}" -le 2000 ] || exit $unknown
         printf '%s\n' "$line"
         if [ "$unknown" -eq 3 ]; then
           baseline_car=$(GITLAB_HOST=$host glab api "projects/$enc/merge_trains/merge_requests/$number" 2>/dev/null) || baseline_car=

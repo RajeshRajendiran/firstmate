@@ -2273,6 +2273,8 @@ injected'; do
   fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" \
     || fail "could not prepare the degraded dedupe poll"
   fm_pr_poll_publish_prepared || fail "could not publish the degraded dedupe poll"
+  fm_pr_poll_degraded_mark_notified "$state" task-a gitlab gitlab.example group/subgroup/project 7 baseline=accepted \
+    || fail "could not seed accepted baseline"
 
   rm -f "$state/.last-check"
   FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
@@ -2416,6 +2418,8 @@ test_degraded_wake_survives_an_unsaved_marker() {
   fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" \
     || fail "could not prepare the unsaved-marker poll"
   fm_pr_poll_publish_prepared || fail "could not publish the unsaved-marker poll"
+  fm_pr_poll_degraded_mark_notified "$state" task-a gitlab gitlab.example group/subgroup/project 7 baseline=accepted \
+    || fail "could not seed accepted baseline"
   # A directory where the marker belongs makes the marker save fail after
   # the poll reported a new degraded transition.
   mkdir "$state/task-a.pr-poll-degraded"
@@ -2734,10 +2738,10 @@ test_term_after_pr_publish_keeps_replacement_registration() {
   cat > "$dir/fakebin/rm" <<'SH'
 #!/usr/bin/env bash
 case " $* " in
-  *" $FM_TEST_CONTROL_LOCK "*)
+  *" $FM_TEST_META_LOCK "*)
     "$FM_TEST_REAL_RM" "$@" || exit 1
-    : > "$FM_TEST_CONTROL_RELEASED"
-    while [ ! -e "$FM_TEST_CONTROL_RELEASE_CONTINUE" ]; do sleep 0.01; done
+    : > "$FM_TEST_META_RELEASED"
+    while [ ! -e "$FM_TEST_META_RELEASE_CONTINUE" ]; do sleep 0.01; done
     exit 0
     ;;
 esac
@@ -2748,17 +2752,17 @@ SH
     FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
-    FM_TEST_CONTROL_LOCK="$state/.control-task-a.lock" FM_TEST_REAL_RM="$(command -v rm)" \
-    FM_TEST_CONTROL_RELEASED="$dir/control-released" \
-    FM_TEST_CONTROL_RELEASE_CONTINUE="$dir/control-release-continue" \
+    FM_TEST_META_LOCK="$state/.meta-task-a.lock" FM_TEST_REAL_RM="$(command -v rm)" \
+    FM_TEST_META_RELEASED="$dir/meta-released" \
+    FM_TEST_META_RELEASE_CONTINUE="$dir/meta-release-continue" \
     PATH="$dir/fakebin:$BASE_PATH" "$PR_CHECK" task-a "$url2" \
       > "$dir/rearm.out" 2> "$dir/rearm.err" &
   pid=$!
   i=0
-  while [ "$i" -lt 1000 ] && [ ! -e "$dir/control-released" ]; do sleep 0.01; i=$((i + 1)); done
-  [ -e "$dir/control-released" ] || fail "re-arm did not reach successful publication before control unlock"
+  while [ "$i" -lt 1000 ] && [ ! -e "$dir/meta-released" ]; do sleep 0.01; i=$((i + 1)); done
+  [ -e "$dir/meta-released" ] || fail "re-arm did not reach successful publication before meta unlock"
   kill -TERM "$pid" || fail "could not interrupt re-arm after successful publication"
-  : > "$dir/control-release-continue"
+  : > "$dir/meta-release-continue"
   set +e
   wait "$pid"
   rc=$?
@@ -5949,6 +5953,96 @@ SH
   pass "device re-record publication waits without rewriting its registration"
 }
 
+test_degraded_watch_live_enable_requires_explicit_reregistration() {
+  local dir state url rc
+  dir=$(make_case degraded-watch-live-enable-requires-reregistration)
+  state="$dir/home/state"
+  url=https://github.com/o/r/pull/1
+  # Arm PR while pr-degraded-watch is disabled
+  rm -f "$dir/home/config/pr-degraded-watch"
+  write_task_meta "$dir" task-a
+  FM_TEST_GH_STATE=OPEN run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
+    || fail "could not register initial PR watch while disabled"
+  [ ! -e "$state/task-a.pr-poll-baseline" ] || fail "disabled registration left a baseline marker"
+  [ -e "$state/task-a.check.sh" ] || fail "disabled registration did not create check.sh"
+
+  # Now enable the home flag
+  : > "$dir/home/config/pr-degraded-watch"
+  rm -f "$state/.last-check"
+
+  # Run watcher with a failing check; because this registration lacks an accepted baseline,
+  # it must NOT emit a degraded wake and stays silent.
+  set +e
+  rc=0
+  FM_TEST_WATCH_STOP_WHEN="$state/.last-check" \
+    FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]' \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-disabled.out" 2> "$dir/watch-disabled.err" || rc=$?
+  set -e
+  [ "$rc" -eq 124 ] || fail "watcher ended before its bound on disabled watch: rc=$rc"
+  [ "$(grep -c 'degraded after ready' "$dir/watch-disabled.out")" -eq 0 ] \
+    || fail "watcher activated degraded watch without an accepted baseline: $(cat "$dir/watch-disabled.out")"
+  ack_watcher_cycle "$state" || fail "disabled sweep acknowledgement failed"
+
+  # Explicit re-registration while the forge is unreadable/failing refuses,
+  # preserving the existing merge monitoring.
+  set +e
+  FM_TEST_GH_FAIL=1 run_check_entry "$dir" task-a "$url" > "$dir/rereg-fail.out" 2> "$dir/rereg-fail.err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "re-registration unexpectedly succeeded while forge was unreadable"
+  [ ! -e "$state/task-a.pr-poll-baseline" ] || fail "failed re-registration left a baseline marker"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "failed re-registration corrupted existing watch"
+
+  # Explicit re-registration when readable succeeds and writes baseline=accepted
+  FM_TEST_GH_STATE=OPEN run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
+    || fail "explicit re-registration failed when forge was readable"
+  [ -e "$state/task-a.pr-poll-baseline" ] || fail "explicit re-registration did not record accepted baseline"
+
+  # Now the watcher activates degradation handling and wakes for the failing check
+  rm -f "$state/.last-check"
+  FM_TEST_WATCH_BOUND=3 \
+    FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]' \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch-enabled.out" 2> "$dir/watch-enabled.err" || true
+  [ "$(grep -c 'degraded after ready' "$dir/watch-enabled.out")" -eq 1 ] \
+    || fail "watcher did not wake after explicit re-registration accepted baseline: $(cat "$dir/watch-enabled.out")"
+
+  pass "enabling degraded watch does not activate existing registrations without explicit re-registration"
+}
+
+test_oversized_degradation_detail_bounds_optional_fields() {
+  local dir out long_url rollup long_path
+  dir=$(make_case oversized-degradation-detail)
+  make_poll_fixture "$dir"
+  ln -sf "$REAL_JQ" "$dir/fakebin/jq"
+
+  # 1. GitHub: check run returns long detailsUrl (>2500 bytes)
+  long_url="https://ci.example.invalid/$(python3 -c 'print("a" * 2500)')"
+  rollup="[{\"__typename\":\"CheckRun\",\"name\":\"ci\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"detailsUrl\":\"$long_url\"}]"
+  out=$(FM_TEST_GH_ROLLUP="$rollup" run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
+  [ "${#out}" -le 2000 ] || fail "GitHub observed poll exceeded 2000 bytes: ${#out}"
+  [ "$(printf '%s' "$out" | grep -c '^degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE url=https://ci.example.invalid/')" -eq 1 ] \
+    || fail "GitHub observed poll dropped mandatory identity or bounded url: $out"
+
+  # Baseline mode must not treat discarded observation as success
+  out=$(FM_HOME="$dir/home" FM_TEST_GH_ROLLUP="$rollup" FM_TEST_JQ="$REAL_JQ" FM_TEST_GH_LOG="$dir/gh.log" PATH="$dir/fakebin:$BASE_PATH" "$POLL" --baseline github https://github.com/o/r/pull/1 github.com o/r 1)
+  [ "${#out}" -le 2000 ] || fail "GitHub baseline poll exceeded 2000 bytes: ${#out}"
+  [ "$(printf '%s' "$out" | grep -c '^degraded head=0123456789abcdef0123456789abcdef01234567')" -eq 1 ] \
+    || fail "GitHub baseline poll treated oversized detail as clean: $out"
+
+  # 2. GitLab train drop: long host + path causing url + pipeline_url to exceed 2000 bytes
+  long_path=$(python3 -c 'print("/".join(["sub_" + "a"*90 for _ in range(10)]))')
+  dir=$(make_case oversized-gitlab-train-drop)
+  ln -sf "$REAL_JQ" "$dir/fakebin/jq"
+  out=$(FM_HOME="$dir/home" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAINS='[]' FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" \
+    PATH="$dir/fakebin:$BASE_PATH" "$POLL" --observed gitlab "https://gitlab.example/$long_path/-/merge_requests/7" gitlab.example "$long_path" 7)
+  [ "${#out}" -le 2000 ] || fail "GitLab train drop exceeded 2000 bytes: ${#out}"
+  [ "$(printf '%s' "$out" | grep -c '^degraded train=dropped url=https://gitlab.example/')" -eq 1 ] \
+    || fail "GitLab train drop dropped mandatory identity: $out"
+
+  pass "oversized degradation detail bounds optional fields and preserves mandatory identity under 2000 bytes"
+}
+
 test_parser_matrix
 test_github_enterprise_config_resolution
 test_github_enterprise_hosts
@@ -6036,3 +6130,5 @@ test_custom_snapshot_cleanup_on_signal
 test_returned_custom_check_descendants_are_drained
 test_timed_out_custom_check_surfaces_with_partial_output
 test_teardown_removes_poll_artifacts
+test_degraded_watch_live_enable_requires_explicit_reregistration
+test_oversized_degradation_detail_bounds_optional_fields

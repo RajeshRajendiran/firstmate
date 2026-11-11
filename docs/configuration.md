@@ -863,7 +863,7 @@ The optional local, gitignored `config/pr-degraded-watch` presence flag opts thi
 With the flag present, GitHub and GitLab registrations record a degraded/train baseline and refuse an unreadable baseline without replacing any existing registration; each poll checks those states, repeated reports within one degraded episode remain silent, and a healthy observation resets the episode so the same head or pipeline can wake if it degrades again.
 Gerrit and Forgejo registrations perform no degradation-only baseline or replacement transaction because their polls do not emit degraded observations.
 Without the flag, registration performs no baseline read, polls make no GitHub rollup or GitLab JSON, pipeline, or train reads, and the watcher ignores `degraded` and `ontrain` results while retaining the existing merged-PR wake.
-The flag is home-local, is not inherited by secondmate homes, and takes effect on the next check sweep.
+The flag is home-local, is not inherited by secondmate homes, and takes effect on the next check sweep for registrations that have an accepted baseline. Enabling the flag does not activate degradation handling on an existing registration that lacks an accepted baseline; that requires explicit re-registration (`bin/fm-pr-check.sh <id> <url>`), which refuses and preserves existing merge monitoring when the baseline cannot be read.
 
 ## Treehouse pool report (config/treehouse-pool-report)
 
