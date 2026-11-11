@@ -207,7 +207,7 @@ Neither refusal armed a poll or recorded a `pr=`, so a missing tool leaves no ha
 
 When `config/pr-degraded-watch` is present, `bin/fm-pr-check.sh` refuses to arm a GitLab watch without `jq` because its degraded-state baseline is JSON-only; with the flag absent, it arms the existing merged-only watch without `jq`.
 A car-endpoint 404 is confirmed with one bounded read of the project's active merge-train list; only a readable list omitting the merge request triggers one bounded MR-state re-read, while list errors stay silent.
-An `opened` or `locked` re-read reports the drop; `closed` stays silent, `merged` reports the merge, and an unreadable re-read reports the confirmed drop with `mr_state=unconfirmed`.
+An `opened` or `locked` re-read reports the drop; `closed` or unreadable stays silent, and `merged` reports the merge.
 The watcher emits a drop only after it has recorded the merge request on the train.
 The merge path cannot read the field output: `detailed_merge_status`, `has_conflicts`, `blocking_discussions_resolved`, and the head pipeline appear only in glab's JSON.
 The poll's silence on a missing tool is safe because silence means "not merged yet"; a merge cannot be silent about it, so the requirement is reported rather than assumed.

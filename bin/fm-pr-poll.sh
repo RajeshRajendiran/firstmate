@@ -113,38 +113,41 @@ case "$provider" in
     # marker never sees another byte.
     # shellcheck disable=SC2016  # The filter's $f and $r are jq variables, expanded by jq, not the shell.
     result=$(GH_HOST=$host gh pr view "$url" --json state,headRefOid,statusCheckRollup --jq '
-      if .state == "MERGED" then
-        "merged"
-      elif .state == "OPEN"
-        and ([.statusCheckRollup[]?
-                | select((.conclusion // .state // "") as $r
-                         | $r == "FAILURE" or $r == "TIMED_OUT"
-                           or $r == "STARTUP_FAILURE" or $r == "ERROR")]
-             | length) > 0
-      then
-        ([.statusCheckRollup[]?
-            | select((.conclusion // .state // "") as $r
-                     | $r == "FAILURE" or $r == "TIMED_OUT"
-                       or $r == "STARTUP_FAILURE" or $r == "ERROR")]) as $f
-        | ([$f[] | .detailsUrl // .targetUrl // ""] | .[0] // "") as $u
-        | "degraded head=" + (.headRefOid // "")
-          + " jobs=" + ([($f[]
-              | ((.name // .context // "check") | gsub("[\\n\\r\\t]"; " "))
-                + ":" + (((.conclusion // .state // "FAILURE"))
-                          | gsub("[\\n\\r\\t]"; " ")))]
-            | join(",") | .[:300])
-          + (if $u == "" then "" else " url=" + ($u | gsub("[\\n\\r\\t]"; " ")) end)
-      elif .state == "OPEN"
-        and ([.statusCheckRollup[]?] | length) > 0
-        and ([.statusCheckRollup[]?
-                | (.conclusion // .state // "") as $r
-                | select($r != "SUCCESS" and $r != "NEUTRAL" and $r != "SKIPPED")]
-             | length) == 0
-      then
-        "healthy head=" + (.headRefOid // "")
-      else
-        ""
-      end' 2>/dev/null) || exit $unknown
+      ([.statusCheckRollup[]?]
+        | to_entries
+        | map({item: .value,
+               key: (.value.name // .value.context // "check"),
+               when: (.value.completedAt // .value.startedAt // .value.createdAt // ""),
+               index: .key})
+        | sort_by(.key, .when, .index)
+        | group_by(.key)
+        | map(last.item)) as $latest
+      | ([$latest[]
+            | select((.conclusion // "") as $r
+                     | ($r != "" and $r != "SUCCESS" and $r != "NEUTRAL" and $r != "SKIPPED")
+                       or (.state // "") == "FAILURE" or (.state // "") == "ERROR")]) as $f
+      | if .state == "MERGED" then
+          "merged"
+        elif .state == "OPEN" and ($f | length) > 0 then
+          ([$f[] | .detailsUrl // .targetUrl // ""] | .[0] // "") as $u
+          | "degraded head=" + (.headRefOid // "")
+            + " jobs=" + ([($f[]
+                | ((.name // .context // "check") | gsub("[\\n\\r\\t]"; " "))
+                  + ":" + (((.conclusion // .state // "FAILURE"))
+                            | gsub("[\\n\\r\\t]"; " ")))]
+              | join(",") | .[:300])
+            + (if $u == "" then "" else " url=" + ($u | gsub("[\\n\\r\\t]"; " ")) end)
+        elif .state == "OPEN"
+          and ($latest | length) > 0
+          and ([$latest[]
+                  | (.conclusion // .state // "") as $r
+                  | select($r != "SUCCESS" and $r != "NEUTRAL" and $r != "SKIPPED")]
+               | length) == 0
+        then
+          "healthy head=" + (.headRefOid // "")
+        else
+          ""
+        end' 2>/dev/null) || exit $unknown
     case $result in
       merged)
         printf '%s\n' merged
@@ -214,10 +217,9 @@ case "$provider" in
     # Any other open merge request has its merge-train car read: a present car
     # emits "ontrain"; after a car HTTP 404, a readable train list without the
     # merge request triggers one bounded MR-state re-read. An opened or locked
-    # re-read emits a degraded train-drop line; a closed re-read stays silent,
-    # and a merged re-read emits "merged". If the re-read fails, the line
-    # includes mr_state=unconfirmed so the confirmed drop is not hidden. The
-    # watcher wakes only when it last saw the
+    # re-read emits a degraded train-drop line; a closed or unreadable re-read
+    # stays silent, and a merged re-read emits "merged". The watcher wakes only
+    # when it last saw the
     # car on the train. Other car or train-list read failures stay silent, as do
     # a pending or green head pipeline and an unreadable initial MR record.
     # Without jq the poll falls back to the plain state field,
@@ -333,14 +335,15 @@ case "$provider" in
             current=${entry%%:*}
             proj=${entry#*:}
             case $current$proj in *[!0-9]*) continue ;; esac
-            case " $seen " in *" $current "*) continue ;; esac
+            key="$proj:$current"
+            case " $seen " in *" $key "*) continue ;; esac
             # A downstream pipeline may live in another project, so it is read
             # through its own project id when the bridge names one.
             base="projects/$enc"
             [ "$proj" = 0 ] || base="projects/$proj"
             [ "$detail_pipelines" -lt 4 ] && [ "$SECONDS" -lt 10 ] || return 0
             detail_pipelines=$((detail_pipelines + 1))
-            seen="$seen $current "
+            seen="$seen $key "
             names=$(gitlab_detail_read "$base/pipelines/$current/jobs?per_page=100" 2>/dev/null \
               | jq -r 'if type == "array" then
                   [.[]
@@ -464,12 +467,11 @@ case "$provider" in
             merged) printf '%s\n' merged; exit 0 ;;
             opened|locked) ;;
             closed) exit 0 ;;
-            *) current_state=unknown ;;
+            *) [ "$unknown" -ne 3 ] || printf '%s\n' train=unknown; exit 0 ;;
           esac
           line="degraded train=dropped url=$url"
           [ -z "$reason" ] || line="$line reason=$reason"
           [ -z "$pipeline" ] || line="$line pipeline_url=https://$host/$path/-/pipelines/$pipeline"
-          [ "$current_state" != unknown ] || line="$line mr_state=unconfirmed"
           [ "${#line}" -le 2000 ] || exit 0
           emit_health
           printf '%s\n' "$line"

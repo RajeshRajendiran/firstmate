@@ -310,6 +310,8 @@ case " $* " in
         [ -z "${FM_TEST_GLAB_STATE_AFTER:-}" ] || [ ! -e "$FM_TEST_GLAB_LOG.train" ] || state=$FM_TEST_GLAB_STATE_AFTER
         printf '%s\n' "{\"state\":\"$state\"}"
         ;;
+      *projects/555/pipelines/77/jobs*) printf '%s\n' "${FM_TEST_GLAB_PROJECT_555_JOBS:-${FM_TEST_GLAB_CHILD_JOBS:-[]}}" ;;
+      *projects/666/pipelines/77/jobs*) printf '%s\n' "${FM_TEST_GLAB_PROJECT_666_JOBS:-${FM_TEST_GLAB_CHILD_JOBS:-[]}}" ;;
       *pipelines/77/jobs*)
         # A child pipeline in another project is served only under that
         # project's own path.
@@ -1961,6 +1963,15 @@ run_poll() {
     bash "$dir/home/state/task-a.check.sh"
 }
 
+run_poll_observed() {
+  local dir=$1
+  shift
+  FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
+    FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
+    PATH="$dir/fakebin:$BASE_PATH" \
+    bash "$dir/home/state/task-a.check.sh" --observed "$@"
+}
+
 test_static_poll_contract() {
   local dir state out rc
   dir=$(make_case poll-contract)
@@ -2171,6 +2182,8 @@ test_github_degraded_poll() {
     'CheckRun|FAILURE' \
     'CheckRun|TIMED_OUT' \
     'CheckRun|STARTUP_FAILURE' \
+    'CheckRun|CANCELLED' \
+    'CheckRun|STALE' \
     'StatusContext|FAILURE' \
     'StatusContext|ERROR'; do
     typename=${shape%%|*}
@@ -2190,6 +2203,13 @@ test_github_degraded_poll() {
   out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://ci.example/run/1"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"TIMED_OUT"}]' run_poll "$dir")
   [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE,lint:TIMED_OUT url=https://ci.example/run/1' ] \
     || fail "GitHub poll did not name every failing check and the first check's URL: $out"
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"CANCELLED","completedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2025-01-01T00:01:00Z"}]' \
+    run_poll_observed "$dir" github https://github.com/o/r/pull/1 github.com o/r 1)
+  [ "$out" = 'healthy head=0123456789abcdef0123456789abcdef01234567' ] \
+    || fail "GitHub poll did not classify a check by its latest successful run: $out"
+  out=$(FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS","completedAt":"2025-01-01T00:00:00Z"},{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"STALE","completedAt":"2025-01-01T00:01:00Z"}]' run_poll "$dir")
+  [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:STALE' ] \
+    || fail "GitHub poll ignored the latest stale run beside an obsolete success: $out"
 
   # A merged, pending, skipped, or green rollup, a non-open pull request, an
   # unreadable head, and a gh failure all stay silent.
@@ -2391,7 +2411,7 @@ test_degraded_wake_survives_an_unsaved_marker() {
   pass "a degraded wake is queued before its dedupe marker, so a failed marker save never silences it"
 }
 test_arming_baselines_an_already_degraded_change() {
-  local dir state url url1 fail_env value
+  local dir state url url1 fail_env value before gh_url1 gh_url2
   dir=$(make_case degraded-baseline)
   state="$dir/home/state"
   ln -sf "$REAL_JQ" "$dir/fakebin/jq"
@@ -2498,13 +2518,14 @@ test_arming_baselines_an_already_degraded_change() {
   state="$dir/home/state"
   ln -sf "$REAL_JQ" "$dir/fakebin/jq"
   write_task_meta "$dir" task-a
-  FM_TEST_GLAB_FAIL=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car \
-    run_check_entry "$dir" task-a "$url" >/dev/null 2>"$dir/unreadable.err" \
-    || fail "arming failed although the unreadable baseline should be unknown"
+  if FM_TEST_GLAB_FAIL=1 run_check_entry "$dir" task-a "$url" >/dev/null 2>"$dir/unreadable.err"; then
+    fail "arming accepted an unreadable GitLab baseline"
+  fi
+  grep -q 'baseline read.*inconclusive' "$dir/unreadable.err" \
+    || fail "GitLab arming did not name the inconclusive baseline"
   [ ! -e "$state/.control-task-a.lock" ] || fail "an unreadable baseline read left the control lock held"
-  [ -e "$state/task-a.check.sh" ] || fail "an unreadable baseline read did not publish a poll"
+  [ ! -e "$state/task-a.check.sh" ] || fail "an unreadable baseline read published a poll"
   for fail_env in FM_TEST_GLAB_API_FAIL FM_TEST_GLAB_TRAIN; do
-    rm -f "$state/task-a.check.sh" "$state/task-a.pr-poll-degraded"
     if [ "$fail_env" = FM_TEST_GLAB_TRAIN ]; then value=fail; else value=1; fi
     if (export "$fail_env=$value" FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success
       [ "$fail_env" = FM_TEST_GLAB_TRAIN ] || export FM_TEST_GLAB_TRAIN=car
@@ -2513,33 +2534,48 @@ test_arming_baselines_an_already_degraded_change() {
     fi
     [ ! -f "$state/task-a.check.sh" ] || fail "an unknown train baseline published a poll ($fail_env)"
   done
-  rm -f "$state/task-a.check.sh"
   FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car \
-    run_check_entry "$dir" task-a "$url" >/dev/null 2>&1 \
+    run_check_entry "$dir" task-a "$url1" >/dev/null 2>&1 \
     || fail "arming an on-train merge request failed"
   [ -f "$state/task-a.pr-poll-train" ] || fail "arming did not persist the train baseline"
+  before=$(state_snapshot "$state")
+  if FM_TEST_GLAB_FAIL=1 run_check_entry "$dir" task-a "$url" >/dev/null 2>&1; then
+    fail "re-arming accepted an unreadable GitLab baseline"
+  fi
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "an unreadable GitLab re-arm changed the previous registration"
   if FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=fail \
     run_check_entry "$dir" task-a "$url" >/dev/null 2>&1; then
     fail "re-arming accepted an unreadable merge-train baseline"
   fi
-  grep -q '^train=on$' "$state/task-a.pr-poll-train" \
-    || fail "an unreadable train re-arm cleared the previous train baseline"
-  rm -f "$state/task-a.check.sh"
-  FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success run_check_entry "$dir" task-a "$url1" >/dev/null 2>&1 \
-    || fail "arming the first GitLab watch for the unreadable case failed"
-  FM_TEST_GLAB_FAIL=1 run_check_entry "$dir" task-a "$url" >/dev/null 2>&1 \
-    || fail "re-arming failed although an unreadable baseline should be unknown"
-  grep -q "^pr=$url\$" "$state/task-a.meta" || fail "an unreadable re-arm did not publish the new PR metadata"
-  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
-    || fail "an unreadable re-arm left the new poll mismatched with its metadata"
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "an unreadable train re-arm changed the previous registration"
+  if FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_RECHECK_FAIL=1 run_check_entry "$dir" task-a "$url" >/dev/null 2>&1; then
+    fail "re-arming accepted an unreadable merge-request recheck baseline"
+  fi
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "an unreadable merge-request recheck changed the previous registration"
+
   dir=$(make_case degraded-baseline-unreadable-gh)
   state="$dir/home/state"
   ln -sf "$REAL_JQ" "$dir/fakebin/jq"
   write_task_meta "$dir" task-a
-  FM_TEST_GH_FAIL=1 run_check_entry "$dir" task-a https://github.com/o/r/pull/9 >/dev/null 2>"$dir/unreadable.err" \
-    || fail "arming failed although an unreadable baseline should be unknown"
-  [ -e "$state/task-a.check.sh" ] || fail "an unreadable GitHub baseline read did not publish a poll"
-  pass "an unreadable baseline read permits arming with an unknown baseline"
+  gh_url1=https://github.com/o/r/pull/8
+  gh_url2=https://github.com/o/r/pull/9
+  if FM_TEST_GH_FAIL=1 run_check_entry "$dir" task-a "$gh_url2" >/dev/null 2>"$dir/unreadable.err"; then
+    fail "arming accepted an unreadable GitHub baseline"
+  fi
+  [ ! -e "$state/task-a.check.sh" ] || fail "an unreadable GitHub baseline published a poll"
+  run_check_entry "$dir" task-a "$gh_url1" >/dev/null 2>&1 \
+    || fail "arming the initial GitHub watch failed"
+  before=$(state_snapshot "$state")
+  if FM_TEST_GH_FAIL=1 run_check_entry "$dir" task-a "$gh_url2" >/dev/null 2>&1; then
+    fail "re-arming accepted an unreadable GitHub baseline"
+  fi
+  [ "$(state_snapshot "$state")" = "$before" ] \
+    || fail "an unreadable GitHub re-arm changed the previous registration"
+  pass "unreadable GitHub and GitLab baselines preserve registration atomically"
 
   # The merge-time re-record makes no forge read of its own, so an unreadable
   # forge cannot fail it before the merge's own live reads, and the watch's
@@ -3438,6 +3474,15 @@ test_gerrit_arming_records_no_patch_set_revision() {
     && fail "arming recorded a Gerrit patch set revision as pr_head"
   [ -e "$state/task-rev.check.sh" ] || fail "arming a Gerrit watch left no poll armed"
 
+  write_task_meta "$dir" task-no-baseline
+  : > "$dir/gerrit-axi.log"
+  FM_TEST_GERRIT_REVISION=$(git -C "$dir/wt" rev-parse HEAD) \
+    run_check_entry "$dir" task-no-baseline \
+      https://gerrit.example/c/group/apps/console/+/4201 >/dev/null \
+    || fail "the degraded-watch flag blocked Gerrit arming"
+  [ "$(wc -l < "$dir/gerrit-axi.log")" -eq 1 ] \
+    || fail "Gerrit arming made a degradation-only extra read: $(cat "$dir/gerrit-axi.log")"
+
   # Submitting a Gerrit change is refused outright, before anything is read or
   # recorded, rather than left as a silently absent provider branch.
   set +e
@@ -3746,6 +3791,14 @@ SH
     || fail "the poll did not read the one pull request by number on the host's login"
   ! grep -qF -- "pulls list" "$dir/tea.log" \
     || fail "the poll scanned a pull request list instead of reading by number"
+
+  write_task_meta "$dir" task-no-baseline
+  : > "$dir/tea.log"
+  FM_TEST_TEA_LOG="$dir/tea.log" FM_TEST_TEA_FAIL=1 \
+    run_check_entry "$dir" task-no-baseline "$url" >/dev/null \
+    || fail "the degraded-watch flag made Forgejo arming depend on a degradation baseline"
+  ! grep -q '^api ' "$dir/tea.log" \
+    || fail "Forgejo arming read a degradation baseline: $(cat "$dir/tea.log")"
   pass "Forgejo poll reads one pull request by number through tea api and wakes only on merged true"
 }
 
@@ -3896,6 +3949,14 @@ group/subgroup/project
     run_poll "$dir")
   [ "$out" = 'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941 jobs=ruby:script_failure,e2e test:script_failure' ] \
     || fail "GitLab poll did not read a cross-project child pipeline through its own project: $out"
+  out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
+    FM_TEST_GLAB_JOBS='[{"name":"ruby","status":"failed","failure_reason":"script_failure"}]' \
+    FM_TEST_GLAB_BRIDGES='[{"name":"a","status":"failed","downstream_pipeline":{"id":77,"project_id":555}},{"name":"b","status":"failed","downstream_pipeline":{"id":77,"project_id":666}}]' \
+    FM_TEST_GLAB_PROJECT_555_JOBS='[{"name":"project-a","status":"failed","failure_reason":"script_failure"}]' \
+    FM_TEST_GLAB_PROJECT_666_JOBS='[{"name":"project-b","status":"failed","failure_reason":"script_failure"}]' \
+    run_poll "$dir")
+  [ "$out" = 'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941 jobs=ruby:script_failure,project-a:script_failure,project-b:script_failure' ] \
+    || fail "GitLab poll merged same-numbered pipelines from different projects: $out"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
     FM_TEST_GLAB_JOBS='[{"name":"ruby","status":"failed","failure_reason":"script_failure\nnewline"}]' \
     run_poll "$dir")
@@ -4125,8 +4186,7 @@ EOF
   [ -z "$out" ] || fail "a closed MR recheck was reported as a train drop: $out"
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_RECHECK_FAIL=1 FM_TEST_GLAB_TRAIN=gone run_poll "$dir")
-  [ "$out" = "degraded train=dropped url=$url reason=mergeable pipeline_url=https://gitlab.example/group/subgroup/project/-/pipelines/941 mr_state=unconfirmed" ] \
-    || fail "an unreadable MR recheck did not preserve the drop with an unconfirmed state: $out"
+  [ -z "$out" ] || fail "an unreadable MR recheck was reported as a train drop: $out"
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_TRAIN=fail run_poll "$dir")
   [ -z "$out" ] || fail "GitLab poll emitted after a failed merge-train read"

@@ -205,6 +205,10 @@ PROVIDER=$FM_PR_PROVIDER
 HOST=$FM_PR_HOST
 PROJECT_PATH=$FM_PR_PATH
 NUMBER=$FM_PR_NUMBER
+DEGRADED_BASELINE_ENABLED=0
+if [ "$DEGRADED_WATCH_ENABLED" = 1 ]; then
+  case $PROVIDER in github|gitlab) DEGRADED_BASELINE_ENABLED=1 ;; esac
+fi
 # gh and gh-axi address github.com unless told otherwise, so a GitHub Enterprise
 # host is exported once here and every forge read this run makes, including the
 # bin/fm-dod-lib.sh children, addresses the host the recorded identity names.
@@ -400,7 +404,7 @@ fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$N
 # identity, so it can only ever match the PR it was written for.
 BASELINE_TRAIN=0
 BASELINE_DEGRADED=
-if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$DEGRADED_WATCH_ENABLED" = 1 ]; then
+if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$DEGRADED_BASELINE_ENABLED" = 1 ]; then
   CONTROL_LOCK="$STATE/.control-$ID.lock"
   fm_lock_acquire_wait "$CONTROL_LOCK" || exit 1
   CONTROL_LOCK_HELD=1
@@ -408,12 +412,12 @@ if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$DEGRADED_WATCH_ENABLED" = 1 ]; then
   # bounded by the watcher's own check bound.
   BASELINE_RC=0
   BASELINE=$(fm_run_timed "${FM_CHECK_TIMEOUT:-30}" "$SCRIPT_DIR/fm-pr-poll.sh" --baseline "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" 2>/dev/null) || BASELINE_RC=$?
-  if [ "$BASELINE_RC" != 0 ] && [ "$BASELINE_RC" != 3 ]; then
-    if [ "$BASELINE_RC" = 124 ]; then
-      echo "error: baseline read of the PR poll timed out" >&2
-    else
-      echo "error: baseline read of the PR poll failed" >&2
-    fi
+  if [ "$BASELINE_RC" != 0 ]; then
+    case $BASELINE_RC in
+      3) echo "error: baseline read of the PR poll was inconclusive" >&2 ;;
+      124) echo "error: baseline read of the PR poll timed out" >&2 ;;
+      *) echo "error: baseline read of the PR poll failed" >&2 ;;
+    esac
     exit 1
   fi
   BASELINE_TRAIN_UNKNOWN=0
@@ -482,7 +486,7 @@ fm_pr_metadata_identity_parse "$META_TMP" || exit 1
 fm_pr_regular_destination_on_device_or_absent "$META" "$STATE_DEVICE" || exit 1
 
 # Keep the current registration recoverable until all replacement files commit.
-if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && { [ "$DEGRADED_WATCH_ENABLED" = 1 ] || { [ "${FM_PR_CHECK_SCAN:-}" = 1 ] && [ "${RECORDED_PR:-}" = "${FM_PR_CHECK_SCAN_REPLACES:-}" ] && [ -n "${RECORDED_PR:-}" ]; }; }; then
+if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && { [ "$DEGRADED_BASELINE_ENABLED" = 1 ] || { [ "${FM_PR_CHECK_SCAN:-}" = 1 ] && [ "${RECORDED_PR:-}" = "${FM_PR_CHECK_SCAN_REPLACES:-}" ] && [ -n "${RECORDED_PR:-}" ]; }; }; then
   BASELINE_BACKUP=$(mktemp -d "$STATE/.fm-pr-baseline.XXXXXX") || exit 1
   restore_baselines() {
     local artifact backup
