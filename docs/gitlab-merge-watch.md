@@ -120,7 +120,7 @@ The provenance record for the non-default host, showing the bumped version tag:
 
 ```
 $ cat state/e3.pr-poll-registration
-fm-pr-poll-registration-v2
+fm-pr-poll-registration-v3
 e3
 gitlab
 https://gitlab.example/group/subgroup/project/-/merge_requests/7
@@ -131,6 +131,7 @@ group/subgroup/project
 1817b0f95db7148246434a4afa0b2c8e7b81fd8f74ef7d473bbd62023e47c439
 70:957243
 70:957244
+off
 ```
 
 Running each published poll the way the watcher does, where an empty result means the poll stayed silent and produced no wake:
@@ -180,8 +181,8 @@ armed: state/e6.check.sh
 
 ## Registration version
 
-The live registration tag is `fm-pr-poll-registration-v2`, which includes the provider tag.
-A `fm-pr-poll-registration-v1` record no longer parses.
+The live registration tag is `fm-pr-poll-registration-v3`, which includes the provider tag and an `accepted` or `off` degraded-watch field.
+Version 2 records remain valid as merged-only registrations; version 1 records no longer parse.
 Arm a current watch with `bin/fm-pr-check.sh`.
 
 ## Merging a merge request

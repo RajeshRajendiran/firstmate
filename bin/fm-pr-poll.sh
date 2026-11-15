@@ -286,8 +286,11 @@ case "$provider" in
           *[!0-9:]*|0:*|*:0) exit 1 ;;
         esac
         cap=$((max_bytes + 1))
-        output=$(mktemp "${TMPDIR:-/tmp}/fm-pr-poll-detail.XXXXXX") || exit 1
-        deadline="$output.deadline"
+        tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-pr-poll-detail.XXXXXX") || exit 1
+        output="$tmpdir/output"
+        deadline="$tmpdir/deadline"
+        umask 077
+        : > "$output" && : > "$deadline" || { rm -rf -- "$tmpdir"; exit 1; }
         child_pid=
         watchdog_pid=
         gitlab_detail_stop() {
@@ -302,7 +305,7 @@ case "$provider" in
             kill "$watchdog_pid" 2>/dev/null || true
             wait "$watchdog_pid" 2>/dev/null || true
           fi
-          rm -f -- "$output" "$deadline"
+          rm -rf -- "$tmpdir"
           exit "$1"
         }
         trap 'gitlab_detail_stop 129' HUP

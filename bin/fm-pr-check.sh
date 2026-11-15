@@ -392,7 +392,19 @@ pr_check_cleanup() {
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
-fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
+REG_DEGRADED_WATCH=off
+if [ "${FM_PR_CHECK_MERGE:-}" = 1 ]; then
+  if fm_pr_poll_artifacts_valid "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" \
+    && [ "$FM_PR_REG_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_REG_URL" = "$URL" ] \
+    && [ "$FM_PR_REG_HOST" = "$HOST" ] && [ "$FM_PR_REG_PATH" = "$PROJECT_PATH" ] \
+    && [ "$FM_PR_REG_NUMBER" = "$NUMBER" ]; then
+    REG_DEGRADED_WATCH=$FM_PR_REG_DEGRADED_WATCH
+  fi
+elif [ "$DEGRADED_BASELINE_ENABLED" = 1 ]; then
+  REG_DEGRADED_WATCH=accepted
+fi
+fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" \
+  "$SCRIPT_DIR/fm-pr-poll.sh" "$REG_DEGRADED_WATCH" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
 # The degraded dedupe baseline is the poll's own reading at the ready report:
@@ -400,17 +412,20 @@ fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$N
 # merge train arms the wake for its drop. It is read first, under the task's
 # control lock the watcher holds while it reads and dedupes, and before the
 # metadata is rewritten: a stalled or failed read fails registration with the
-# task metadata and the previously published poll unchanged. Lock order is
-# control -> meta -> publish. A merge-time re-record neither takes the lock
+# task metadata and the previously published poll unchanged. Every non-merge
+# registration holds the control lock across replacement, while only GitHub and
+# GitLab opt-in registrations make the baseline read. Lock order is control ->
+# meta -> publish. A merge-time re-record neither takes the lock
 # (bin/fm-pr-merge.sh already holds it) nor reads or rewrites the baseline: it
-# records before any forge call, and the marker it leaves is keyed to the PR
-# identity, so it can only ever match the PR it was written for.
+# preserves the accepted mode carried by the existing registration.
 BASELINE_TRAIN=0
 BASELINE_DEGRADED=
-if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$DEGRADED_BASELINE_ENABLED" = 1 ]; then
+if [ "${FM_PR_CHECK_MERGE:-}" != 1 ]; then
   CONTROL_LOCK="$STATE/.control-$ID.lock"
   fm_lock_acquire_wait "$CONTROL_LOCK" || exit 1
   CONTROL_LOCK_HELD=1
+fi
+if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$DEGRADED_BASELINE_ENABLED" = 1 ]; then
   # The read runs under the control lock the watcher waits on, so it is
   # bounded by the watcher's own check bound.
   BASELINE_RC=0
@@ -493,7 +508,7 @@ if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && { [ "$DEGRADED_BASELINE_ENABLED" = 1 ] |
   BASELINE_BACKUP=$(mktemp -d "$STATE/.fm-pr-baseline.XXXXXX") || exit 1
   restore_baselines() {
     local artifact backup
-    for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train" "$STATE/$ID.pr-poll-baseline" \
+    for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train" \
       "$STATE/$ID.check.sh" "$STATE/$ID.pr-poll" "$STATE/$ID.pr-poll-registration"; do
       backup="$BASELINE_BACKUP/$(basename "$artifact")"
       if [ -e "$backup" ]; then
@@ -507,14 +522,14 @@ if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && { [ "$DEGRADED_BASELINE_ENABLED" = 1 ] |
   baseline_failure() {
     exit 1
   }
-  for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train" "$STATE/$ID.pr-poll-baseline" \
+  for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train" \
     "$STATE/$ID.check.sh" "$STATE/$ID.pr-poll" "$STATE/$ID.pr-poll-registration"; do
     [ -e "$artifact" ] || [ -L "$artifact" ] || continue
     [ -f "$artifact" ] && [ ! -L "$artifact" ] \
       && [ "$(fm_pr_file_device "$artifact")" = "$STATE_DEVICE" ] \
       && [ "$(fm_pr_file_link_count "$artifact")" = 1 ] || { rm -rf -- "$BASELINE_BACKUP"; exit 1; }
   done
-  for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train" "$STATE/$ID.pr-poll-baseline"; do
+  for artifact in "$META" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train"; do
     [ -e "$artifact" ] || [ -L "$artifact" ] || continue
     mv -- "$artifact" "$BASELINE_BACKUP/$(basename "$artifact")" || baseline_failure
   done
@@ -552,11 +567,9 @@ if [ -n "${BASELINE_BACKUP:-}" ]; then
   else
     rm -f -- "$STATE/$ID.pr-poll-train" || baseline_failure
   fi
-  fm_pr_poll_degraded_mark_notified "$STATE" "$ID" \
-    "$PROVIDER" "$HOST" "$PROJECT_PATH" "$NUMBER" baseline=accepted || baseline_failure
 fi
-if [ "$DEGRADED_BASELINE_ENABLED" != 1 ]; then
-  rm -f -- "$STATE/$ID.pr-poll-baseline" "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train"
+if [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && [ "$REG_DEGRADED_WATCH" != accepted ]; then
+  rm -f -- "$STATE/$ID.pr-poll-degraded" "$STATE/$ID.pr-poll-train"
 fi
 if fm_pr_poll_publish_prepared; then
   fm_lock_release "$PR_POLL_PUBLISH_LOCK" || { [ -z "${BASELINE_BACKUP:-}" ] || baseline_failure; exit 1; }

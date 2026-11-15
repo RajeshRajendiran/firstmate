@@ -4262,8 +4262,7 @@ while :; do
           is_degraded_watch=0
           poll_mode=--validated
           if [ "$PR_DEGRADED_WATCH_ENABLED" = 1 ] \
-            && fm_pr_poll_degraded_already_notified "$STATE" "$id" \
-              "$provider" "$host" "$path" "$number" baseline=accepted; then
+            && [ "$FM_PR_REG_DEGRADED_WATCH" = accepted ]; then
             is_degraded_watch=1
             poll_mode=--observed
           fi

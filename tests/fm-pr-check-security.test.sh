@@ -21,6 +21,7 @@ fm_git_identity fmtest fmtest@example.invalid
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 REAL_CP=$(command -v cp)
 REAL_MV=$(command -v mv)
+REAL_MKTEMP=$(command -v mktemp)
 REAL_STAT=$(command -v stat)
 REAL_CHMOD=$(command -v chmod)
 # The merge path reads a merge request's JSON with the real jq, and BASE_PATH is
@@ -2270,11 +2271,9 @@ injected'; do
   done
 
   write_poll_meta "$state" task-a "$url"
-  fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" \
+  fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" accepted \
     || fail "could not prepare the degraded dedupe poll"
   fm_pr_poll_publish_prepared || fail "could not publish the degraded dedupe poll"
-  fm_pr_poll_degraded_mark_notified "$state" task-a gitlab gitlab.example group/subgroup/project 7 baseline=accepted \
-    || fail "could not seed accepted baseline"
 
   rm -f "$state/.last-check"
   FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed \
@@ -2415,11 +2414,9 @@ test_degraded_wake_survives_an_unsaved_marker() {
   ln -sf "$REAL_JQ" "$dir/fakebin/jq"
   url=https://gitlab.example/group/subgroup/project/-/merge_requests/7
   write_poll_meta "$state" task-a "$url"
-  fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" \
+  fm_pr_poll_prepare "$state" task-a gitlab "$url" gitlab.example group/subgroup/project 7 "$POLL" accepted \
     || fail "could not prepare the unsaved-marker poll"
   fm_pr_poll_publish_prepared || fail "could not publish the unsaved-marker poll"
-  fm_pr_poll_degraded_mark_notified "$state" task-a gitlab gitlab.example group/subgroup/project 7 baseline=accepted \
-    || fail "could not seed accepted baseline"
   # A directory where the marker belongs makes the marker save fail after
   # the poll reported a new degraded transition.
   mkdir "$state/task-a.pr-poll-degraded"
@@ -2612,6 +2609,10 @@ test_arming_baselines_an_already_degraded_change() {
     run_check_entry "$dir" task-a "$url" >/dev/null 2>&1 \
     || fail "arming a GitLab watch with a failed head pipeline failed before the merge-time re-record"
   "$REAL_CP" "$state/task-a.pr-poll-degraded" "$dir/marker.before"
+  fm_pr_poll_registration_parse "$state/task-a.pr-poll-registration" \
+    && [ "$FM_PR_REG_DEGRADED_WATCH" = accepted ] \
+    || fail "the initial watched registration did not carry its accepted baseline"
+  rm -f "$dir/home/config/pr-degraded-watch"
   : > "$dir/glab.log"
   FM_PR_CHECK_MERGE=1 FM_TEST_GLAB_FAIL=1 run_check_entry "$dir" task-a "$url" >/dev/null 2>"$dir/merge-record.err" \
     || fail "the merge-time re-record failed on an unreadable forge: $(cat "$dir/merge-record.err")"
@@ -2619,6 +2620,8 @@ test_arming_baselines_an_already_degraded_change() {
   cmp -s "$dir/marker.before" "$state/task-a.pr-poll-degraded" \
     || fail "the merge-time re-record changed the watch's degraded marker"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "the merge-time re-record did not republish a valid poll"
+  [ "$FM_PR_REG_DEGRADED_WATCH" = accepted ] \
+    || fail "the merge-time re-record cleared the accepted degraded-watch mode"
   pass "the merge-time re-record skips the baseline read and keeps the watch's marker"
 }
 
@@ -3554,10 +3557,25 @@ test_gerrit_arming_records_no_patch_set_revision() {
 
   write_task_meta "$dir" task-no-baseline
   : > "$dir/gerrit-axi.log"
-  FM_TEST_GERRIT_REVISION=$(git -C "$dir/wt" rev-parse HEAD) \
+  cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+case "${!#}" in
+  */task-no-baseline.pr-poll-registration)
+    [ -d "$FM_TEST_CONTROL_LOCK" ] || exit 91
+    : > "$FM_TEST_CONTROL_OBSERVED"
+    ;;
+esac
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  FM_TEST_CONTROL_LOCK="$state/.control-task-no-baseline.lock" \
+    FM_TEST_CONTROL_OBSERVED="$dir/gerrit-control-observed" FM_TEST_REAL_MV="$REAL_MV" \
+    FM_TEST_GERRIT_REVISION=$(git -C "$dir/wt" rev-parse HEAD) \
     run_check_entry "$dir" task-no-baseline \
       https://gerrit.example/c/group/apps/console/+/4201 >/dev/null \
     || fail "the degraded-watch flag blocked Gerrit arming"
+  [ -e "$dir/gerrit-control-observed" ] \
+    || fail "Gerrit registration did not publish under the task control lock"
   [ "$(wc -l < "$dir/gerrit-axi.log")" -eq 1 ] \
     || fail "Gerrit arming made a degradation-only extra read: $(cat "$dir/gerrit-axi.log")"
 
@@ -3872,9 +3890,24 @@ SH
 
   write_task_meta "$dir" task-no-baseline
   : > "$dir/tea.log"
-  FM_TEST_TEA_LOG="$dir/tea.log" FM_TEST_TEA_FAIL=1 \
+  cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+case "${!#}" in
+  */task-no-baseline.pr-poll-registration)
+    [ -d "$FM_TEST_CONTROL_LOCK" ] || exit 91
+    : > "$FM_TEST_CONTROL_OBSERVED"
+    ;;
+esac
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  FM_TEST_CONTROL_LOCK="$state/.control-task-no-baseline.lock" \
+    FM_TEST_CONTROL_OBSERVED="$dir/forgejo-control-observed" FM_TEST_REAL_MV="$REAL_MV" \
+    FM_TEST_TEA_LOG="$dir/tea.log" FM_TEST_TEA_FAIL=1 \
     run_check_entry "$dir" task-no-baseline "$url" >/dev/null \
     || fail "the degraded-watch flag made Forgejo arming depend on a degradation baseline"
+  [ -e "$dir/forgejo-control-observed" ] \
+    || fail "Forgejo registration did not publish under the task control lock"
   ! grep -q '^api ' "$dir/tea.log" \
     || fail "Forgejo arming read a degradation baseline: $(cat "$dir/tea.log")"
   pass "Forgejo poll reads one pull request by number through tea api and wakes only on merged true"
@@ -5954,7 +5987,7 @@ SH
 }
 
 test_degraded_watch_live_enable_requires_explicit_reregistration() {
-  local dir state url rc
+  local dir state url rc legacy
   dir=$(make_case degraded-watch-live-enable-requires-reregistration)
   state="$dir/home/state"
   url=https://github.com/o/r/pull/1
@@ -5963,8 +5996,18 @@ test_degraded_watch_live_enable_requires_explicit_reregistration() {
   write_task_meta "$dir" task-a
   FM_TEST_GH_STATE=OPEN run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
     || fail "could not register initial PR watch while disabled"
-  [ ! -e "$state/task-a.pr-poll-baseline" ] || fail "disabled registration left a baseline marker"
+  fm_pr_poll_registration_parse "$state/task-a.pr-poll-registration" \
+    && [ "$FM_PR_REG_DEGRADED_WATCH" = off ] \
+    || fail "disabled registration did not remain merged-only"
   [ -e "$state/task-a.check.sh" ] || fail "disabled registration did not create check.sh"
+  legacy=$(mktemp "$state/.legacy-registration.XXXXXX") || fail "could not stage a legacy registration"
+  awk 'NR == 1 { print "fm-pr-poll-registration-v2"; next } NR <= 11 { print }' \
+    "$state/task-a.pr-poll-registration" > "$legacy" || fail "could not stage a legacy registration"
+  chmod 0600 "$legacy"
+  mv -f -- "$legacy" "$state/task-a.pr-poll-registration"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" \
+    && [ "$FM_PR_REG_DEGRADED_WATCH" = off ] \
+    || fail "a pre-acceptance registration did not remain a valid merged-only watch"
 
   # Now enable the home flag
   : > "$dir/home/config/pr-degraded-watch"
@@ -5990,13 +6033,16 @@ test_degraded_watch_live_enable_requires_explicit_reregistration() {
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "re-registration unexpectedly succeeded while forge was unreadable"
-  [ ! -e "$state/task-a.pr-poll-baseline" ] || fail "failed re-registration left a baseline marker"
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "failed re-registration corrupted existing watch"
+  [ "$FM_PR_REG_DEGRADED_WATCH" = off ] \
+    || fail "failed re-registration activated degraded monitoring"
 
-  # Explicit re-registration when readable succeeds and writes baseline=accepted
+  # Explicit re-registration when readable succeeds and records acceptance
   FM_TEST_GH_STATE=OPEN run_check_entry "$dir" task-a "$url" >/dev/null 2>/dev/null \
     || fail "explicit re-registration failed when forge was readable"
-  [ -e "$state/task-a.pr-poll-baseline" ] || fail "explicit re-registration did not record accepted baseline"
+  fm_pr_poll_registration_parse "$state/task-a.pr-poll-registration" \
+    && [ "$FM_PR_REG_DEGRADED_WATCH" = accepted ] \
+    || fail "explicit re-registration did not record accepted monitoring"
 
   # Now the watcher activates degradation handling and wakes for the failing check
   rm -f "$state/.last-check"
@@ -6007,6 +6053,38 @@ test_degraded_watch_live_enable_requires_explicit_reregistration() {
     || fail "watcher did not wake after explicit re-registration accepted baseline: $(cat "$dir/watch-enabled.out")"
 
   pass "enabling degraded watch does not activate existing registrations without explicit re-registration"
+}
+
+test_gitlab_detail_deadline_uses_private_marker() {
+  local dir sentinel out
+  dir=$(make_case gitlab-private-deadline-marker)
+  sentinel="$dir/sentinel"
+  mkdir -p "$dir/tmp"
+  printf 'keep\n' > "$sentinel"
+  ln -sf "$REAL_JQ" "$dir/fakebin/jq"
+  cat > "$dir/fakebin/mktemp" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -d ]; then
+  exec "$FM_TEST_REAL_MKTEMP" "$@"
+fi
+output="$FM_TEST_EXPOSED_OUTPUT"
+: > "$output" || exit 1
+ln -sf "$FM_TEST_SENTINEL" "$output.deadline" || exit 1
+printf '%s\n' "$output"
+SH
+  chmod +x "$dir/fakebin/mktemp"
+  out=$(FM_HOME="$dir/home" TMPDIR="$dir/tmp" FM_TEST_REAL_MKTEMP="$REAL_MKTEMP" \
+    FM_TEST_EXPOSED_OUTPUT="$dir/tmp/exposed" FM_TEST_SENTINEL="$sentinel" \
+    FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
+    FM_TEST_GLAB_TRAIN_LIST_HANG=1 FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" \
+    PATH="$dir/fakebin:$BASE_PATH" "$POLL" --observed gitlab \
+      https://gitlab.example/group/subgroup/project/-/merge_requests/7 \
+      gitlab.example group/subgroup/project 7) \
+    || fail "bounded GitLab poll failed while timing out its train-list read"
+  [ "$(cat "$sentinel")" = keep ] \
+    || fail "GitLab detail deadline followed an attacker-controlled marker symlink"
+  case $out in ''|'healthy pipeline=941') ;; *) fail "timed-out GitLab detail emitted an unexpected result: $out" ;; esac
+  pass "GitLab detail deadlines write only inside a private temporary directory"
 }
 
 test_oversized_degradation_detail_bounds_optional_fields() {
@@ -6131,4 +6209,5 @@ test_returned_custom_check_descendants_are_drained
 test_timed_out_custom_check_surfaces_with_partial_output
 test_teardown_removes_poll_artifacts
 test_degraded_watch_live_enable_requires_explicit_reregistration
+test_gitlab_detail_deadline_uses_private_marker
 test_oversized_degradation_detail_bounds_optional_fields

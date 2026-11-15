@@ -47,6 +47,7 @@ FM_PR_META_URL=
 FM_PR_META_HOST=
 FM_PR_META_PATH=
 FM_PR_META_NUMBER=
+FM_PR_REG_VERSION=
 FM_PR_REG_ID=
 FM_PR_REG_PROVIDER=
 FM_PR_REG_URL=
@@ -57,6 +58,7 @@ FM_PR_REG_DATA_HASH=
 FM_PR_REG_TEMPLATE_HASH=
 FM_PR_REG_DATA_IDENTITY=
 FM_PR_REG_CHECK_IDENTITY=
+FM_PR_REG_DEGRADED_WATCH=
 FM_PR_POLL_DATA_TMP=
 FM_PR_POLL_CHECK_TMP=
 FM_PR_POLL_REG_TMP=
@@ -73,6 +75,7 @@ FM_PR_POLL_EXPECT_DATA_HASH=
 FM_PR_POLL_EXPECT_TEMPLATE_HASH=
 FM_PR_POLL_EXPECT_DATA_IDENTITY=
 FM_PR_POLL_EXPECT_CHECK_IDENTITY=
+FM_PR_POLL_EXPECT_DEGRADED_WATCH=
 FM_PR_POLL_TEMPLATE=
 FM_PR_POLL_STATE_DEVICE=
 FM_PR_POLL_SNAPSHOT_ID=
@@ -535,11 +538,12 @@ fm_pr_poll_data_parse() {
 }
 
 # Registration layout: version tag, task id, then the same provider-tagged
-# identity as the sidecar, then the two hashes and the two file identities.
-# The version tag moved to v2 with the provider tag, so a registration written
-# by the previous release is recognised as old and refused.
+# identity as the sidecar, the two hashes, the two file identities, and whether
+# this registration accepted a degraded-watch baseline. Version 2 registrations
+# predate that field and remain valid as merged-only registrations.
 fm_pr_poll_registration_parse() {
-  local file=$1 version id provider url host path number data_hash template_hash data_identity check_identity
+  local file=$1 version id provider url host path number data_hash template_hash data_identity check_identity degraded_watch
+  FM_PR_REG_VERSION=
   FM_PR_REG_ID=
   FM_PR_REG_PROVIDER=
   FM_PR_REG_URL=
@@ -550,6 +554,7 @@ fm_pr_poll_registration_parse() {
   FM_PR_REG_TEMPLATE_HASH=
   FM_PR_REG_DATA_IDENTITY=
   FM_PR_REG_CHECK_IDENTITY=
+  FM_PR_REG_DEGRADED_WATCH=
   [ -f "$file" ] && [ ! -L "$file" ] || return 1
   exec 7< "$file" || return 1
   IFS= read -r version <&7 || { exec 7<&-; return 1; }
@@ -563,12 +568,24 @@ fm_pr_poll_registration_parse() {
   IFS= read -r template_hash <&7 || { exec 7<&-; return 1; }
   IFS= read -r data_identity <&7 || { exec 7<&-; return 1; }
   IFS= read -r check_identity <&7 || { exec 7<&-; return 1; }
-  if IFS= read -r _extra <&7; then
-    exec 7<&-
-    return 1
-  fi
+  case $version in
+    fm-pr-poll-registration-v2)
+      if IFS= read -r _extra <&7; then
+        exec 7<&-
+        return 1
+      fi
+      degraded_watch=off
+      ;;
+    fm-pr-poll-registration-v3)
+      IFS= read -r degraded_watch <&7 || { exec 7<&-; return 1; }
+      if IFS= read -r _extra <&7; then
+        exec 7<&-
+        return 1
+      fi
+      ;;
+    *) exec 7<&-; return 1 ;;
+  esac
   exec 7<&-
-  [ "$version" = fm-pr-poll-registration-v2 ] || return 1
   fm_pr_task_id_valid "$id" || return 1
   fm_pr_url_parse "$url" || return 1
   [ "$provider" = "$FM_PR_PROVIDER" ] || return 1
@@ -579,6 +596,11 @@ fm_pr_poll_registration_parse() {
   [[ "$template_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$data_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
   [[ "$check_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+  case "$degraded_watch:$provider" in
+    accepted:github|accepted:gitlab|off:*) ;;
+    *) return 1 ;;
+  esac
+  FM_PR_REG_VERSION=$version
   FM_PR_REG_ID=$id
   FM_PR_REG_PROVIDER=$FM_PR_PROVIDER
   FM_PR_REG_URL=$FM_PR_URL
@@ -589,6 +611,7 @@ fm_pr_poll_registration_parse() {
   FM_PR_REG_TEMPLATE_HASH=$template_hash
   FM_PR_REG_DATA_IDENTITY=$data_identity
   FM_PR_REG_CHECK_IDENTITY=$check_identity
+  FM_PR_REG_DEGRADED_WATCH=$degraded_watch
 }
 
 fm_pr_poll_cleanup() {
@@ -620,13 +643,17 @@ fm_pr_poll_revoke_final() {
 }
 
 fm_pr_poll_prepare() {
-  local state=$1 id=$2 provider=$3 url=$4 host=$5 path=$6 number=$7 template=$8
+  local state=$1 id=$2 provider=$3 url=$4 host=$5 path=$6 number=$7 template=$8 degraded_watch=${9:-off}
   fm_pr_task_id_valid "$id" || return 1
   fm_pr_url_parse "$url" || return 1
   [ "$provider" = "$FM_PR_PROVIDER" ] || return 1
   [ "$host" = "$FM_PR_HOST" ] || return 1
   [ "$path" = "$FM_PR_PATH" ] || return 1
   [ "$number" = "$FM_PR_NUMBER" ] || return 1
+  case "$degraded_watch:$provider" in
+    accepted:github|accepted:gitlab|off:*) ;;
+    *) return 1 ;;
+  esac
   [ -f "$template" ] || return 1
 
   [ ! -L "$state" ] || return 1
@@ -642,6 +669,7 @@ fm_pr_poll_prepare() {
   FM_PR_POLL_EXPECT_HOST=$host
   FM_PR_POLL_EXPECT_PATH=$path
   FM_PR_POLL_EXPECT_NUMBER=$number
+  FM_PR_POLL_EXPECT_DEGRADED_WATCH=$degraded_watch
   FM_PR_POLL_TEMPLATE=$template
   FM_PR_POLL_STATE_DEVICE=$(fm_pr_file_device "$state") || return 1
   [ -n "$FM_PR_POLL_STATE_DEVICE" ] || return 1
@@ -675,17 +703,18 @@ fm_pr_poll_prepare() {
   FM_PR_POLL_EXPECT_TEMPLATE_HASH=$(fm_pr_sha256 "$FM_PR_POLL_CHECK_TMP") || { fm_pr_poll_cleanup; return 1; }
   FM_PR_POLL_EXPECT_DATA_IDENTITY=$(fm_pr_file_identity "$FM_PR_POLL_DATA_TMP") || { fm_pr_poll_cleanup; return 1; }
   FM_PR_POLL_EXPECT_CHECK_IDENTITY=$(fm_pr_file_identity "$FM_PR_POLL_CHECK_TMP") || { fm_pr_poll_cleanup; return 1; }
-  if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-      fm-pr-poll-registration-v2 "$id" "$provider" "$url" "$host" "$path" "$number" \
+  if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+      fm-pr-poll-registration-v3 "$id" "$provider" "$url" "$host" "$path" "$number" \
       "$FM_PR_POLL_EXPECT_DATA_HASH" "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" \
-      "$FM_PR_POLL_EXPECT_DATA_IDENTITY" "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" \
+      "$FM_PR_POLL_EXPECT_DATA_IDENTITY" "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" "$degraded_watch" \
       > "$FM_PR_POLL_REG_TMP" \
     || ! chmod 0600 "$FM_PR_POLL_REG_TMP" \
     || ! fm_pr_private_file_valid "$FM_PR_POLL_REG_TMP" 600 "$FM_PR_POLL_STATE_DEVICE" \
     || ! fm_pr_poll_registration_parse "$FM_PR_POLL_REG_TMP" \
     || [ "$FM_PR_REG_ID" != "$id" ] \
     || [ "$FM_PR_REG_DATA_HASH" != "$FM_PR_POLL_EXPECT_DATA_HASH" ] \
-    || [ "$FM_PR_REG_TEMPLATE_HASH" != "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" ]; then
+    || [ "$FM_PR_REG_TEMPLATE_HASH" != "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" ] \
+    || [ "$FM_PR_REG_DEGRADED_WATCH" != "$degraded_watch" ]; then
     fm_pr_poll_cleanup
     return 1
   fi
@@ -734,7 +763,8 @@ fm_pr_poll_publish_prepared() {
     || [ "$FM_PR_REG_DATA_HASH" != "$FM_PR_POLL_EXPECT_DATA_HASH" ] \
     || [ "$FM_PR_REG_TEMPLATE_HASH" != "$FM_PR_POLL_EXPECT_TEMPLATE_HASH" ] \
     || [ "$FM_PR_REG_DATA_IDENTITY" != "$FM_PR_POLL_EXPECT_DATA_IDENTITY" ] \
-    || [ "$FM_PR_REG_CHECK_IDENTITY" != "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" ]; then
+    || [ "$FM_PR_REG_CHECK_IDENTITY" != "$FM_PR_POLL_EXPECT_CHECK_IDENTITY" ] \
+    || [ "$FM_PR_REG_DEGRADED_WATCH" != "$FM_PR_POLL_EXPECT_DEGRADED_WATCH" ]; then
     fm_pr_poll_revoke_final || true
     return 1
   fi
@@ -850,9 +880,10 @@ fm_pr_poll_registration_device_shifted() {  # <state> <id> <template>
 # Success means the strict fm_pr_poll_artifacts_valid accepts the result.
 fm_pr_poll_registration_rerecord_device() {  # <state> <id> <template>
   local state=$1 id=$2 template=$3 state_device registration tmp reg_hash reg_identity
-  local id_line provider url host path number data_hash template_hash data_identity check_identity
+  local version id_line provider url host path number data_hash template_hash data_identity check_identity degraded_watch
   fm_pr_poll_registration_device_shifted "$state" "$id" "$template" || return 1
   registration="$state/$id.pr-poll-registration"
+  version=$FM_PR_REG_VERSION
   id_line=$FM_PR_REG_ID
   provider=$FM_PR_REG_PROVIDER
   url=$FM_PR_REG_URL
@@ -861,24 +892,43 @@ fm_pr_poll_registration_rerecord_device() {  # <state> <id> <template>
   number=$FM_PR_REG_NUMBER
   data_hash=$FM_PR_REG_DATA_HASH
   template_hash=$FM_PR_REG_TEMPLATE_HASH
+  degraded_watch=$FM_PR_REG_DEGRADED_WATCH
   data_identity=$FM_PR_POLL_REARM_DATA_IDENTITY
   check_identity=$FM_PR_POLL_REARM_CHECK_IDENTITY
   state_device=$(fm_pr_file_device "$state") || return 1
   reg_hash=$(fm_pr_sha256 "$registration") || return 1
   reg_identity=$(fm_pr_file_identity "$registration") || return 1
   tmp=$(mktemp "$state/.fm-pr-poll-registration.XXXXXX") || return 1
-  if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
-      fm-pr-poll-registration-v2 "$id_line" "$provider" "$url" "$host" "$path" "$number" \
-      "$data_hash" "$template_hash" "$data_identity" "$check_identity" > "$tmp" \
-    || ! chmod 0600 "$tmp" \
+  case $version in
+    fm-pr-poll-registration-v2)
+      printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+        "$version" "$id_line" "$provider" "$url" "$host" "$path" "$number" \
+        "$data_hash" "$template_hash" "$data_identity" "$check_identity" > "$tmp" || {
+          rm -f -- "$tmp"
+          return 1
+        }
+      ;;
+    fm-pr-poll-registration-v3)
+      printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+        "$version" "$id_line" "$provider" "$url" "$host" "$path" "$number" \
+        "$data_hash" "$template_hash" "$data_identity" "$check_identity" "$degraded_watch" > "$tmp" || {
+          rm -f -- "$tmp"
+          return 1
+        }
+      ;;
+    *) rm -f -- "$tmp"; return 1 ;;
+  esac
+  if ! chmod 0600 "$tmp" \
     || ! fm_pr_private_file_valid "$tmp" 600 "$state_device" \
     || ! fm_pr_poll_registration_parse "$tmp" \
+    || [ "$FM_PR_REG_VERSION" != "$version" ] \
     || [ "$FM_PR_REG_ID" != "$id" ] \
     || [ "$FM_PR_REG_URL" != "$url" ] \
     || [ "$FM_PR_REG_DATA_HASH" != "$data_hash" ] \
     || [ "$FM_PR_REG_TEMPLATE_HASH" != "$template_hash" ] \
     || [ "$FM_PR_REG_DATA_IDENTITY" != "$data_identity" ] \
     || [ "$FM_PR_REG_CHECK_IDENTITY" != "$check_identity" ] \
+    || [ "$FM_PR_REG_DEGRADED_WATCH" != "$degraded_watch" ] \
     || ! fm_pr_poll_registration_device_shifted "$state" "$id" "$template" \
     || [ "$FM_PR_POLL_REARM_DATA_IDENTITY" != "$data_identity" ] \
     || [ "$FM_PR_POLL_REARM_CHECK_IDENTITY" != "$check_identity" ] \
@@ -1773,7 +1823,7 @@ fm_pr_poll_degraded_identity_valid() {  # <identity>
       esac
       [ "${#value}" -le 18 ] || return 1
       ;;
-    train=on|train=dropped|baseline=accepted) ;;
+    train=on|train=dropped) ;;
     *) return 1 ;;
   esac
 }
@@ -1810,8 +1860,6 @@ fm_pr_poll_degraded_already_notified() {  # <state> <id> <provider> <host> <path
   state_device=$(fm_pr_file_device "$state") || return 1
   if [ "$identity" = train=on ]; then
     marker="$state/$id.pr-poll-train"
-  elif [ "$identity" = baseline=accepted ]; then
-    marker="$state/$id.pr-poll-baseline"
   else
     marker="$state/$id.pr-poll-degraded"
   fi
@@ -1827,8 +1875,6 @@ fm_pr_poll_degraded_mark_notified() {  # <state> <id> <provider> <host> <path> <
   state_device=$(fm_pr_file_device "$state") || return 1
   if [ "$identity" = train=on ]; then
     marker="$state/$id.pr-poll-train"
-  elif [ "$identity" = baseline=accepted ]; then
-    marker="$state/$id.pr-poll-baseline"
   else
     marker="$state/$id.pr-poll-degraded"
   fi
