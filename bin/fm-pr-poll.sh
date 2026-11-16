@@ -34,9 +34,12 @@ degraded_enabled=0
 poll_home=${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
 if [ "$#" -eq 6 ] && { [ "$1" = --validated ] || [ "$1" = --observed ] || [ "$1" = --baseline ]; }; then
   [ "$1" != --observed ] || report_health=1
-  [ "$1" != --baseline ] || unknown=3
-  if [ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ]; then
-    [ "$1" != --observed ] && [ "$1" != --baseline ] || degraded_enabled=1
+  if [ "$1" = --baseline ]; then
+    unknown=3
+    degraded_enabled=1
+  elif [ "$1" = --observed ] \
+    && [ -e "${FM_CONFIG_OVERRIDE:-$poll_home/config}/pr-degraded-watch" ]; then
+    degraded_enabled=1
   fi
   provider=$2
   url=$3
@@ -345,29 +348,21 @@ case "$provider" in
         gitlab_detail_stop 0
     )
     gitlab_train_list_state() {  # <merge request iid>
-        local iid=$1 page=1 started=$SECONDS seconds page_json page_state
-        while [ "$page" -le 4 ]; do
-          seconds=$((5 - (SECONDS - started)))
-          [ "$seconds" -gt 0 ] || return 1
-          page_json=$(gitlab_detail_read \
-            "projects/$enc/merge_trains?per_page=100&page=$page" "$seconds" 262144) || return 1
-          page_state=$(printf '%s' "$page_json" | jq -er --argjson iid "$iid" '
-            if type == "array" and length <= 100
-              and all(.[]; type == "object"
-                and (.merge_request | type) == "object"
-                and (.merge_request.iid | type) == "number")
-            then
-              if any(.[]; .merge_request.iid == $iid) then "present"
-              else "absent \(length)"
-              end
-            else
-              error("invalid merge train list")
-            end' 2>/dev/null) || return 1
-          [ "$page_state" != present ] || { printf '%s\n' present; return 0; }
-          [ "${page_state#absent }" -eq 100 ] || { printf '%s\n' absent; return 0; }
-          page=$((page + 1))
-        done
-        return 1
+        local iid=$1 page_json
+        page_json=$(gitlab_detail_read \
+          "projects/$enc/merge_trains?per_page=100&page=1" 5 262144) || return 1
+        printf '%s' "$page_json" | jq -er --argjson iid "$iid" '
+          if type == "array" and length < 100
+            and all(.[]; type == "object"
+              and (.merge_request | type) == "object"
+              and (.merge_request.iid | type) == "number")
+          then
+            if any(.[]; .merge_request.iid == $iid) then "present"
+            else "absent"
+            end
+          else
+            error("incomplete merge train list")
+          end' 2>/dev/null
     }
     gitlab_failure_detail() {  # <pipeline>; sets detail
         # The degraded line names the failed jobs with their forge failure

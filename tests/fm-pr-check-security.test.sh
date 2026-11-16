@@ -2092,6 +2092,32 @@ test_degraded_watch_opt_in_absent_preserves_merged_only_behavior() {
   pass "degraded wake reads are opt-in; absent flag keeps GitHub and GitLab polls merged-only, silent, and baseline-free"
 }
 
+test_baseline_mode_survives_late_flag_removal() {
+  local dir out
+  dir=$(make_case degraded-baseline-late-flag-removal)
+  rm -f "$dir/home/config/pr-degraded-watch"
+  ln -sf "$REAL_JQ" "$dir/fakebin/jq"
+
+  out=$(FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_TEST_GH_ROLLUP='[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"FAILURE"}]' \
+    FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" \
+    PATH="$dir/fakebin:$BASE_PATH" "$POLL" --baseline github \
+      https://github.com/o/r/pull/1 github.com o/r 1)
+  [ "$out" = 'degraded head=0123456789abcdef0123456789abcdef01234567 jobs=ci:FAILURE' ] \
+    || fail "GitHub baseline mode rechecked a removed degraded-watch flag: $out"
+
+  out=$(FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
+    FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car \
+    FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" \
+    PATH="$dir/fakebin:$BASE_PATH" "$POLL" --baseline gitlab \
+      https://gitlab.example/group/subgroup/project/-/merge_requests/7 \
+      gitlab.example group/subgroup/project 7)
+  [ "$out" = ontrain ] \
+    || fail "GitLab baseline mode rechecked a removed degraded-watch flag: $out"
+
+  pass "explicit baseline mode survives late degraded-watch flag removal"
+}
+
 test_degraded_watch_flag_refreshes_each_sweep() {
   local dir state url pid i
   dir=$(make_case degraded-watch-flag-refresh)
@@ -4159,12 +4185,14 @@ EOF
   [ "$out" = 'degraded pipeline=941 url=https://gitlab.example/group/subgroup/project/-/pipelines/941 jobs=ruby:script_failure' ] \
     || fail "GitLab failed-pipeline detail was unavailable without Perl: $out"
   rm -f "$dir/glab.log.train"
+  : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
     FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2='[]' \
     FM_TEST_GLAB_LOG="$dir/glab.log" FM_TEST_JQ="$REAL_JQ" PATH="$noperl" \
     bash "$dir/home/state/task-a.check.sh")
-  [ "$out" = "degraded train=dropped url=$url reason=mergeable pipeline_url=https://gitlab.example/group/subgroup/project/-/pipelines/941" ] \
-    || fail "GitLab train-drop observation was unavailable without Perl: $out"
+  [ -z "$out" ] || fail "GitLab poll inferred a train drop from a multi-page list without Perl: $out"
+  ! grep -qF 'merge_trains?per_page=100&page=2' "$dir/glab.log" \
+    || fail "GitLab poll continued an unstable offset scan without Perl"
 
   write_task_meta "$dir" task-no-perl
   FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
@@ -4172,27 +4200,31 @@ EOF
     FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
     FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
     FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" \
+    FM_TEST_GLAB_TRAINS='[]' \
     PATH="$noperl" "$PR_CHECK" task-no-perl "$url" >/dev/null 2> "$dir/no-perl-register.err" \
     || fail "GitLab degraded-watch registration required Perl: $(cat "$dir/no-perl-register.err")"
   [ -f "$dir/home/state/task-no-perl.check.sh" ] \
     || fail "GitLab degraded-watch registration without Perl published no poll"
-  fm_pr_poll_degraded_already_notified "$state" task-no-perl gitlab gitlab.example group/subgroup/project 7 train=on \
-    || fail "GitLab registration did not find the merge request on a later train-list page"
+  [ ! -e "$state/task-no-perl.pr-poll-train" ] \
+    || fail "an absent one-page train baseline recorded membership"
 
   write_task_meta "$dir" task-pagination-unknown
+  : > "$dir/glab.log"
   if FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_CONFIG_OVERRIDE="$dir/home/config" \
       FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
       FM_TEST_GH_AXI_LOG="$dir/gh-axi.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
       FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
       FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-      FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_full" \
-      FM_TEST_GLAB_TRAINS_PAGE_3="$page_full" FM_TEST_GLAB_TRAINS_PAGE_4="$page_full" \
+      FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" \
       PATH="$noperl" "$PR_CHECK" task-pagination-unknown "$url" >/dev/null 2> "$dir/pagination-unknown.err"; then
-    fail "GitLab registration inferred absence from incomplete train-list pagination"
+    fail "GitLab registration accepted a multi-page train baseline"
   fi
   [ ! -e "$state/task-pagination-unknown.check.sh" ] \
-    || fail "incomplete train-list pagination published a GitLab poll"
+    || fail "a multi-page train baseline published a GitLab poll"
+  [ "$(grep -F -c 'merge_trains?per_page=100&page=1' "$dir/glab.log")" -eq 1 ] \
+    || fail "GitLab baseline did not read exactly one bounded train-list page"
+  ! grep -qF 'merge_trains?per_page=100&page=2' "$dir/glab.log" \
+    || fail "GitLab baseline continued an unstable offset scan"
 
   for train in '' gone; do
     rm -f "$dir/glab.log.train"
@@ -4231,8 +4263,8 @@ EOF
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=failed FM_TEST_GLAB_PIPELINE_ID=0 run_poll "$dir")
   [ "$out" = ontrain ] || fail "GitLab poll lost train membership for a pipeline without a readable id: $out"
 
-  # A missing-car response reports membership when the flat train list still
-  # names the merge request, including when it appears on a later page.
+  # A missing-car response reports membership only when one complete train-list
+  # page names the merge request. A full page is inconclusive and stays silent.
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
   [ "$out" = ontrain ] || fail "GitLab poll did not report a merge request on its train: $out"
   out=$(FM_TEST_GLAB_STDERR_NOTICE=1 FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=car run_poll "$dir")
@@ -4243,28 +4275,27 @@ EOF
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
     FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_present" run_poll "$dir")
-  [ "$out" = ontrain ] || fail "GitLab poll missed a train member on the second page: $out"
-  [ "$(grep -F -c 'merge_trains?per_page=100&page=2' "$dir/glab.log")" -eq 1 ] \
-    || fail "GitLab poll did not read the second merge-train page"
+  [ -z "$out" ] || fail "GitLab poll claimed membership from a multi-page train list: $out"
+  ! grep -qF 'merge_trains?per_page=100&page=2' "$dir/glab.log" \
+    || fail "GitLab poll continued an unstable offset scan for membership"
   out=$(FM_TEST_GLAB_STATE=locked FM_TEST_GLAB_PIPELINE=canceled FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_DETAIL=need_rebase \
     FM_TEST_GLAB_TRAINS="$page_present" run_poll "$dir")
   [ "$out" = ontrain ] || fail "GitLab poll did not report a locked flat-list train member: $out"
 
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2="$page_full" \
-    FM_TEST_GLAB_TRAINS_PAGE_3="$page_full" FM_TEST_GLAB_TRAINS_PAGE_4="$page_full" run_poll "$dir")
-  [ -z "$out" ] || fail "GitLab poll inferred absence after exhausting its train-list page bound: $out"
-  [ "$(grep -F -c 'merge_trains?per_page=100&page=' "$dir/glab.log")" -eq 4 ] \
-    || fail "GitLab train-list pagination did not stop at its four-page bound"
+    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" run_poll "$dir")
+  [ -z "$out" ] || fail "GitLab poll inferred absence from a full train-list page: $out"
+  [ "$(grep -F -c 'merge_trains?per_page=100&page=' "$dir/glab.log")" -eq 1 ] \
+    || fail "GitLab train-list read was not limited to one page"
   for value in transport invalid oversized; do
     case $value in
-      transport) page_env=(FM_TEST_GLAB_TRAINS_FAIL_PAGE=2) ;;
-      invalid) page_env=(FM_TEST_GLAB_TRAINS_PAGE_2='{"invalid":true}') ;;
-      oversized) page_env=(FM_TEST_GLAB_TRAINS_OVERSIZE_PAGE=2) ;;
+      transport) page_env=(FM_TEST_GLAB_TRAINS_FAIL_PAGE=1) ;;
+      invalid) page_env=(FM_TEST_GLAB_TRAINS_PAGE_1='{"invalid":true}') ;;
+      oversized) page_env=(FM_TEST_GLAB_TRAINS_OVERSIZE_PAGE=1) ;;
     esac
     out=$(env FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-      FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" "${page_env[@]}" \
+      "${page_env[@]}" \
       FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GLAB_LOG="$dir/glab.log" \
       FM_TEST_GERRIT_AXI_LOG="$dir/gerrit-axi.log" FM_TEST_JQ="$REAL_JQ" \
       PATH="$dir/fakebin:$BASE_PATH" bash "$dir/home/state/task-a.check.sh")
@@ -4274,7 +4305,7 @@ EOF
   # train costs no pipeline detail reads on each poll.
   : > "$dir/glab.log"
   out=$(FM_TEST_GLAB_STATE=opened FM_TEST_GLAB_PIPELINE=success FM_TEST_GLAB_TRAIN=gone \
-    FM_TEST_GLAB_TRAINS_PAGE_1="$page_full" FM_TEST_GLAB_TRAINS_PAGE_2='[]' \
+    FM_TEST_GLAB_TRAINS='[]' \
     FM_TEST_GLAB_JOBS='[{"name":"ruby","status":"failed","failure_reason":"script_failure"}]' \
     FM_TEST_GLAB_BRIDGES='[{"name":"child","status":"failed","downstream_pipeline":{"id":77}}]' \
     FM_TEST_GLAB_CHILD_JOBS='[{"name":"e2e test","status":"failed","failure_reason":"script_failure"}]' \
@@ -4283,8 +4314,8 @@ EOF
     || fail "GitLab train drop did not name only the pipeline link: $out"
   ! grep -q 'api projects/.*/pipelines/' "$dir/glab.log" \
     || fail "GitLab train drop read pipeline details: $(cat "$dir/glab.log")"
-  [ "$(grep -F -c 'merge_trains?per_page=100&page=2' "$dir/glab.log")" -eq 1 ] \
-    || fail "GitLab poll inferred train absence before reading the final page"
+  ! grep -qF 'merge_trains?per_page=100&page=2' "$dir/glab.log" \
+    || fail "GitLab poll read beyond the complete first train-list page"
   rm -f "$dir/glab.log.train"
   out=$(FM_TEST_GLAB_STATE=merged FM_TEST_GLAB_TRAIN=gone FM_TEST_GLAB_TRAINS='[]' run_poll "$dir")
   [ "$out" = merged ] || fail "a merged MR missing from the active train list was not reported as merged: $out"
@@ -6185,6 +6216,7 @@ test_valid_recording_and_merge_derivation
 test_rejected_metacharacter_bytes_are_inert
 test_static_poll_contract
 test_degraded_watch_opt_in_absent_preserves_merged_only_behavior
+test_baseline_mode_survives_late_flag_removal
 test_degraded_watch_flag_refreshes_each_sweep
 test_degraded_watch_flag_in_an_overridden_home
 test_github_degraded_poll
